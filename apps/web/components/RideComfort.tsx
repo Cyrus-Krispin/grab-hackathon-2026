@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ComfortMap, type CurrentPosition, type RideEvent, type SegmentGeo } from "./ComfortMap";
+import { ComfortMap, type CurrentPosition, type PlanPin, type RideEvent, type SegmentGeo } from "./ComfortMap";
+import { SingaporePlaceField, type PickedPlace } from "./SingaporePlaceField";
 import { getApiUrl, tripWsUrl } from "@/lib/config";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -55,27 +56,146 @@ const ATTR_COLORS: Record<string, string> = {
   route:   "#34d399",
 };
 
-// ─── Simulator ────────────────────────────────────────────────────────────────
+// ─── Simulator (per-trip random incidents) ────────────────────────────────────
+
+function hashTripSeed(tripId: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < tripId.length; i++) {
+    h ^= tripId.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function runtimeNonce32(): number {
+  if (typeof globalThis !== "undefined" && globalThis.crypto?.getRandomValues) {
+    const buf = new Uint32Array(1);
+    globalThis.crypto.getRandomValues(buf);
+    return buf[0];
+  }
+  return (Date.now() ^ Math.floor((globalThis.performance?.now() ?? 0) * 1e6)) >>> 0;
+}
+
+/** Deterministic per trip_id so each booking differs; XOR browser entropy so rapid re-runs still vary. */
+function mulberry32(seed: number) {
+  return function () {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleInPlace<T>(arr: T[], rng: () => number) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+type Sample = {
+  lat: number;
+  lng: number;
+  ax: number;
+  ay: number;
+  az: number;
+  speed_kmh: number;
+};
+
+type IncidentApply = (s: Sample, ctx: { naturalLateral: number; rng: () => number }) => void;
+
+const INCIDENT_LIBRARY: IncidentApply[] = [
+  // Harsh brake — mostly longitudinal (traffic-style)
+  (s, { rng }) => {
+    s.ax = -5.0 + (rng() - 0.5) * 0.9;
+    s.ay = 0.15 + rng() * 0.35;
+    s.spd = Math.max(12, 22 - rng() * 10);
+  },
+  // Vertical bump
+  (s, { rng }) => {
+    s.az = 13.6 + rng() * 2.4;
+  },
+  // Hard acceleration
+  (s, { rng }) => {
+    s.ax = 4.4 + rng() * 1.1;
+    s.spd = 68 + rng() * 14;
+  },
+  // Brake + lateral (swerve)
+  (s, { rng }) => {
+    s.ax = -4.0 - rng() * 1.2;
+    s.ay = 3.2 + rng() * 1.2;
+    s.spd = 28 + rng() * 18;
+  },
+  // Second bump profile
+  (s, { rng }) => {
+    s.az = 12.9 + rng() * 2.2;
+  },
+  // Speeding with turn
+  (s, { naturalLateral, rng }) => {
+    s.spd = 88 + rng() * 16;
+    s.ay = Math.max(2.2, Math.abs(naturalLateral) * 0.9 + rng() * 1.4);
+  },
+];
+
+/** Pick indices along the polyline with margin from ends and spacing between incidents. */
+function pickIncidentIndices(n: number, count: number, rng: () => number): number[] {
+  if (n < 4 || count < 1) return [];
+
+  const margin = Math.max(1, Math.min(Math.floor(n * 0.05), 20));
+  const minGap = Math.max(1, Math.floor(n * 0.025));
+  const lo = margin;
+  const hi = n - 1 - margin;
+  if (hi <= lo) return [Math.floor((lo + hi) / 2)];
+
+  const pool: number[] = [];
+  for (let i = lo; i <= hi; i++) pool.push(i);
+  shuffleInPlace(pool, rng);
+
+  const picked: number[] = [];
+  for (const idx of pool) {
+    if (picked.length >= count) break;
+    if (picked.every((p) => Math.abs(p - idx) >= minGap)) picked.push(idx);
+  }
+
+  if (picked.length < count) {
+    for (let i = lo; i <= hi && picked.length < count; i++) {
+      if (picked.every((p) => Math.abs(p - i) >= Math.max(1, minGap - 1))) picked.push(i);
+    }
+  }
+  return picked.slice(0, count);
+}
+
+function buildIncidentPlan(n: number, tripId: string): Map<number, IncidentApply> {
+  const rng = mulberry32(hashTripSeed(tripId) ^ runtimeNonce32());
+
+  const count = Math.min(INCIDENT_LIBRARY.length + 1, Math.max(3, Math.floor(n / 28)));
+  const indices = pickIncidentIndices(n, count, rng);
+  const recipes = [...INCIDENT_LIBRARY];
+  shuffleInPlace(recipes, rng);
+
+  const map = new Map<number, IncidentApply>();
+  for (let k = 0; k < indices.length; k++) {
+    map.set(indices[k], recipes[k % recipes.length]);
+  }
+  return map;
+}
 
 /**
- * Builds a realistic motion stream from the route path:
- * - Smooth baseline noise (ax ≈ 0.3, ay from path curvature, az ≈ 9.81)
- * - Speed varies 35–75 km/h with gentle ramp
- * - Deliberate injected events at fixed indices: 2× harsh brakes, 2× bumps, 1× hard accel
+ * Motion stream from the route path: baseline noise + curvature-based lateral,
+ * plus incidents placed at trip-unique indices with shuffled types and jittered magnitudes.
  */
-function buildSamples(path: [number, number][]): Array<{
-  lat: number; lng: number; ax: number; ay: number; az: number; speed_kmh: number;
-}> {
+function buildSamples(path: [number, number][], tripId: string): Sample[] {
   const n = path.length;
+  const incidents = buildIncidentPlan(n, tripId);
+  const rng = mulberry32(hashTripSeed(tripId) ^ 0x9e3779b9);
+
   return path.map(([lat, lng], i) => {
     const progress = i / Math.max(n - 1, 1);
 
-    // Speed curve: ramp up, cruise, brake at end
     let spd = 55;
-    if (progress < 0.15) spd = 30 + progress / 0.15 * 25;
-    else if (progress > 0.85) spd = 55 - (progress - 0.85) / 0.15 * 25;
+    if (progress < 0.15) spd = 30 + (progress / 0.15) * 25;
+    else if (progress > 0.85) spd = 55 - ((progress - 0.85) / 0.15) * 25;
 
-    // Curvature-based lateral: look at bearing change between adjacent points
     let naturalLateral = 0;
     if (i > 0 && i < n - 1) {
       const [la0, lo0] = path[i - 1];
@@ -84,29 +204,18 @@ function buildSamples(path: [number, number][]): Array<{
       const b0 = Math.atan2(lo1 - lo0, la1 - la0);
       const b1 = Math.atan2(lo2 - lo1, la2 - la1);
       const delta = b1 - b0;
-      naturalLateral = Math.sin(delta) * 1.8; // scale to m/s²
+      naturalLateral = Math.sin(delta) * 1.8;
     }
 
-    // Baseline smooth noise
-    let ax = 0.25 + (Math.random() - 0.5) * 0.15;
-    let ay = naturalLateral + (Math.random() - 0.5) * 0.18;
-    let az = 9.81 + (Math.random() - 0.5) * 0.12;
+    const ax = 0.25 + (rng() - 0.5) * 0.15;
+    const ay = naturalLateral + (rng() - 0.5) * 0.18;
+    const az = 9.81 + (rng() - 0.5) * 0.12;
 
-    // ── Injected events ──────────────────────────────────────────
-    // Harsh brake at ~20% (traffic stop attribution)
-    if (i === Math.floor(n * 0.20)) { ax = -5.2; ay = 0.3; spd = 20; }
-    // Hard bump at ~32% (road attribution)
-    if (i === Math.floor(n * 0.32)) { az = 14.5; }
-    // Hard acceleration at ~45% (driver attribution)
-    if (i === Math.floor(n * 0.45)) { ax = 4.8; spd = 75; }
-    // Harsh brake + lateral at ~60% (driver attribution — swerve + brake)
-    if (i === Math.floor(n * 0.60)) { ax = -4.5; ay = 3.8; }
-    // Second bump at ~75% (road attribution)
-    if (i === Math.floor(n * 0.75)) { az = 13.8; }
-    // Speeding with turn at ~85% if available
-    if (i === Math.floor(n * 0.85)) { spd = 95; ay = 2.8; }
+    const sample: Sample = { lat, lng, ax, ay, az, speed_kmh: spd };
+    const inject = incidents.get(i);
+    if (inject) inject(sample, { naturalLateral, rng });
 
-    return { lat, lng, ax, ay, az, speed_kmh: spd };
+    return sample;
   });
 }
 
@@ -120,6 +229,10 @@ export function RideComfort() {
   const [result, setResult] = useState<FinalResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [wsReady, setWsReady] = useState(false);
+  const [startPlace, setStartPlace] = useState<PickedPlace | null>(null);
+  const [endPlace, setEndPlace] = useState<PickedPlace | null>(null);
+  const [useDemoRoute, setUseDemoRoute] = useState(false);
+  const [routingNote, setRoutingNote] = useState<string | null>(null);
 
   const tripIdRef = useRef<string | null>(null);
   const wsRef     = useRef<WebSocket | null>(null);
@@ -136,12 +249,26 @@ export function RideComfort() {
   const startTrip = useCallback(async () => {
     setErr(null); setResult(null); setEvents([]); setLive(null);
     setGeojson(emptyFc); setPhase("idle"); setWsReady(false);
+    setRoutingNote(null);
+
+    if (!useDemoRoute && (!startPlace || !endPlace)) {
+      setErr("Select a start and end place in Singapore, or turn on “Demo route”.");
+      return;
+    }
 
     try {
+      const body: Record<string, unknown> = useDemoRoute
+        ? { useFixture: true }
+        : {
+            useFixture: false,
+            origin: { lat: startPlace!.lat, lng: startPlace!.lng },
+            destination: { lat: endPlace!.lat, lng: endPlace!.lng },
+          };
+
       const res = await fetch(`${getApiUrl()}/trips`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ useFixture: true }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
 
@@ -149,11 +276,21 @@ export function RideComfort() {
         trip_id: string;
         geojson: SegmentGeo;
         path_lat_lng: [number, number][];
+        routing_mode?: string;
       };
+
+      if (d.routing_mode === "grab") setRoutingNote(null);
+      else if (d.routing_mode === "osrm") {
+        setRoutingNote("Route from OSRM. Add GRABMAPS_API_KEY for Grab Directions.");
+      } else if (useDemoRoute) {
+        setRoutingNote("Built-in demo path (not tied to map search).");
+      } else {
+        setRoutingNote("Sample route geometry. Set GRABMAPS_API_KEY for Grab between your places.");
+      }
 
       tripIdRef.current = d.trip_id;
       setGeojson(d.geojson);
-      samplesRef.current = buildSamples(d.path_lat_lng || []);
+      samplesRef.current = buildSamples(d.path_lat_lng || [], d.trip_id);
       idxRef.current = 0;
       t0Ref.current = performance.now();
 
@@ -185,7 +322,7 @@ export function RideComfort() {
     } catch (e) {
       setErr(`Failed to start trip: ${e instanceof Error ? e.message : e}`);
     }
-  }, []);
+  }, [useDemoRoute, startPlace, endPlace]);
 
   // ── Step 2: Run simulator ──────────────────────────────────────────────────
   const runSimulator = useCallback(() => {
@@ -259,9 +396,22 @@ export function RideComfort() {
 
   const comfort = live?.comfort ?? "green";
 
+  const pickPins: PlanPin[] | null =
+    phase === "idle" && startPlace && endPlace && !useDemoRoute
+      ? [
+          { role: "start", lat: startPlace.lat, lng: startPlace.lng },
+          { role: "end", lat: endPlace.lat, lng: endPlace.lng },
+        ]
+      : null;
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950">
-      <ComfortMap geojson={geojson} events={events} currentPosition={live?.position} />
+      <ComfortMap
+        geojson={geojson}
+        events={events}
+        currentPosition={live?.position}
+        pickPins={pickPins}
+      />
 
       <div className="pointer-events-none absolute inset-0 z-10">
         <div className="absolute left-4 top-4 rounded-lg border border-zinc-200 bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
@@ -277,6 +427,9 @@ export function RideComfort() {
                   ? wsReady ? "Connected · simulating" : "Connecting..."
                   : phase === "done" ? "Trip complete" : "Ready"}
               </div>
+              {routingNote && phase === "running" && (
+                <p className="mt-2 max-w-[220px] text-[11px] leading-snug text-amber-700">{routingNote}</p>
+              )}
             </div>
             <Link
               href="/analytics"
@@ -317,14 +470,42 @@ export function RideComfort() {
             <div className="flex flex-col gap-4">
               <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-sm leading-relaxed text-zinc-600">
                 <p className="text-zinc-800 font-medium mb-1">How it works</p>
-                <p>Gyroscope + accelerometer data is mapped to route segments. Events are detected and attributed to <span className="text-blue-600">driver</span>, <span className="text-orange-600">road</span>, <span className="text-purple-600">traffic</span>, or <span className="text-emerald-600">route</span> difficulty.</p>
+                <p>Search any start and end in Singapore, then run a comfort simulation along the driving route. Events are attributed to <span className="text-blue-600">driver</span>, <span className="text-orange-600">road</span>, <span className="text-purple-600">traffic</span>, or <span className="text-emerald-600">route</span>.</p>
               </div>
+
+              <label className="flex cursor-pointer items-start gap-2 text-xs text-zinc-700">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-zinc-300"
+                  checked={useDemoRoute}
+                  onChange={(e) => {
+                    setUseDemoRoute(e.target.checked);
+                    if (e.target.checked) {
+                      setStartPlace(null);
+                      setEndPlace(null);
+                    }
+                  }}
+                />
+                <span>
+                  <span className="font-medium text-zinc-800">Demo route</span>
+                  <span className="block text-zinc-500">Use the built-in sample path (no place search).</span>
+                </span>
+              </label>
+
+              {!useDemoRoute && (
+                <div className="flex flex-col gap-3">
+                  <SingaporePlaceField label="From" value={startPlace} onChange={setStartPlace} />
+                  <SingaporePlaceField label="To" value={endPlace} onChange={setEndPlace} />
+                </div>
+              )}
+
               <button
                 onClick={startTrip}
-                className="w-full rounded-lg py-3 text-sm font-semibold text-white transition-all active:scale-95"
+                disabled={!useDemoRoute && (!startPlace || !endPlace)}
+                className="w-full rounded-lg py-3 text-sm font-semibold text-white transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ background: "#00b14f" }}
               >
-                Book & Start Trip
+                Book &amp; Start Trip
               </button>
             </div>
           )}

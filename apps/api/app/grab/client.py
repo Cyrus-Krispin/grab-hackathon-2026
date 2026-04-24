@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 import httpx
 
@@ -25,17 +25,45 @@ def _fixture_points() -> List[Tuple[float, float]]:
     return out
 
 
-def fetch_directions_polyline6() -> Tuple[str, List[Tuple[float, float]]]:
+def _osrm_route_points(origin: Tuple[float, float], destination: Tuple[float, float]) -> List[Tuple[float, float]]:
+    """Public OSRM demo — driving geometry between (lat,lng) pairs. Server-side only."""
+    lat1, lng1 = origin
+    lat2, lng2 = destination
+    url = f"https://router.project-osrm.org/route/v1/driving/{lng1},{lat1};{lng2},{lat2}"
+    with httpx.Client(timeout=25.0) as client:
+        r = client.get(url, params={"overview": "full", "geometries": "geojson"})
+        r.raise_for_status()
+        data = r.json()
+    coords = data["routes"][0]["geometry"]["coordinates"]
+    return [(float(c[1]), float(c[0])) for c in coords]
+
+
+def fetch_directions_polyline6(
+    origin: Optional[Tuple[float, float]] = None,
+    destination: Optional[Tuple[float, float]] = None,
+) -> Tuple[str, List[Tuple[float, float]]]:
     s = get_settings()
-    # Fixture: explicit flag, or no key (local dev) — see SKILL.md §3 for live shape
-    if s.use_directions_fixture == 1 or not s.grab_api_key.strip():
+    if s.use_directions_fixture == 1:
         pts = _fixture_points()
         if len(pts) < 2:
             raise RuntimeError("Fixture has fewer than 2 points")
         return "fixture", pts
 
-    o_lat, o_lng = s.demo_origin_lat, s.demo_origin_lng
-    d_lat, d_lng = s.demo_dest_lat, s.demo_dest_lng
+    o_lat, o_lng = origin if origin is not None else (s.demo_origin_lat, s.demo_origin_lng)
+    d_lat, d_lng = destination if destination is not None else (s.demo_dest_lat, s.demo_dest_lng)
+
+    if not s.grab_api_key.strip():
+        if origin is not None and destination is not None:
+            try:
+                pts = _osrm_route_points(origin, destination)
+                if len(pts) >= 2:
+                    return "osrm", pts
+            except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
+                pass
+        pts = _fixture_points()
+        if len(pts) < 2:
+            raise RuntimeError("Fixture has fewer than 2 points")
+        return "fixture", pts
     # Grab gateway: each `coordinates` is **lng,lat** (SKILL.md §3, §6; example JS in SKILL)
     base = s.grab_base_url.rstrip("/")
     path = f"{base}/api/v1/maps/eta/v1/direction"

@@ -57,8 +57,11 @@ class Trip:
     _cooldowns: Dict[Tuple[str, int], float] = field(default_factory=dict)
 
 
-def create_trip() -> Trip:
-    enc, points = fetch_directions_polyline6()
+def create_trip(
+    origin: Optional[Tuple[float, float]] = None,
+    destination: Optional[Tuple[float, float]] = None,
+) -> Trip:
+    enc, points = fetch_directions_polyline6(origin, destination)
     segs = build_segments(points, target_len_m=55.0, max_bearing_delta_deg=22.0)
     if not segs:
         segs = build_segments(points, target_len_m=200.0, max_bearing_delta_deg=90.0)

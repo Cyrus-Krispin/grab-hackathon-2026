@@ -26,6 +26,24 @@ html, body {
 }
 .event-marker:hover { transform: scale(1.3); }
 
+/* Start / end plan pins (before trip) */
+.plan-pin {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 800;
+  color: #fff;
+  cursor: default;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.plan-pin-start { background: #00b14f; }
+.plan-pin-end { background: #2563eb; }
+
 /* Live ride pointer */
 .car-marker {
   position: relative;

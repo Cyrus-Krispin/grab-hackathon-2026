@@ -33,7 +33,11 @@ export type CurrentPosition = {
   heading_deg: number;
 };
 
+export type PlanPin = { lat: number; lng: number; role: "start" | "end" };
+
 const SOURCE = "route-comfort";
+const PLAN_START_ID = "_plan-start";
+const PLAN_END_ID = "_plan-end";
 const LAYER  = "route-comfort-line";
 const CARTO  = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
@@ -62,9 +66,10 @@ type Props = {
   geojson: SegmentGeo;
   events: RideEvent[];
   currentPosition?: CurrentPosition | null;
+  pickPins?: PlanPin[] | null;
 };
 
-export function ComfortMap({ geojson, events, currentPosition }: Props) {
+export function ComfortMap({ geojson, events, currentPosition, pickPins }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef       = useRef<Map | null>(null);
   const geoRef       = useRef(geojson);
@@ -211,6 +216,29 @@ export function ComfortMap({ geojson, events, currentPosition }: Props) {
       existing[ev.id] = marker;
     }
   }, [events, ready]);
+
+  // Start / end picks (idle planning)
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    const map = mapRef.current;
+    const existing = markersRef.current;
+    for (const k of [PLAN_START_ID, PLAN_END_ID]) {
+      existing[k]?.remove();
+      delete existing[k];
+    }
+    if (!pickPins?.length) return;
+    for (const pin of pickPins) {
+      if (!Number.isFinite(pin.lat) || !Number.isFinite(pin.lng)) continue;
+      const id = pin.role === "start" ? PLAN_START_ID : PLAN_END_ID;
+      const el = document.createElement("div");
+      el.className = `plan-pin plan-pin-${pin.role === "start" ? "start" : "end"}`;
+      el.textContent = pin.role === "start" ? "A" : "B";
+      el.title = pin.role === "start" ? "Start" : "End";
+      existing[id] = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat([pin.lng, pin.lat])
+        .addTo(map);
+    }
+  }, [pickPins, ready]);
 
   return (
     <div ref={containerRef} className="w-full h-full" />

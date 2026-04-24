@@ -12,12 +12,13 @@ from app.comfort.trip import (
     on_sample,
     segment_color_payload,
 )
+from app.grab.places import search_places_singapore
 
 import httpx
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 TRIPS: Dict[str, Trip] = {}
 
@@ -171,8 +172,19 @@ def build_ops_status() -> Dict[str, Any]:
     }
 
 
-class StartBody(BaseModel):
-    useFixture: bool = Field(default=True, alias="useFixture")
+class LatLngModel(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    lat: float = Field(..., ge=-90, le=90)
+    lng: float = Field(..., ge=-180, le=180)
+
+
+class StartTripBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    use_fixture: bool = Field(default=False, alias="useFixture")
+    origin: Optional[LatLngModel] = None
+    destination: Optional[LatLngModel] = None
 
 
 def create_app() -> FastAPI:
@@ -208,12 +220,37 @@ def create_app() -> FastAPI:
             "fixture": bool(s.use_directions_fixture),
         }
 
+    @app.get("/places/search")
+    def places_search(q: str = "", limit: int = 8) -> dict:
+        return search_places_singapore(q, limit)
+
     @app.post("/trips")
-    def start_trip(body: Optional[StartBody] = None) -> dict:
-        if body is not None:
-            os.environ["USE_DIRECTIONS_FIXTURE"] = "1" if body.useFixture else "0"
-            get_settings.cache_clear()
-        t = create_trip()
+    def start_trip(body: Optional[StartTripBody] = None) -> dict:
+        body = body or StartTripBody()
+        os.environ["USE_DIRECTIONS_FIXTURE"] = "1" if body.use_fixture else "0"
+        get_settings.cache_clear()
+        s = get_settings()
+
+        origin_t = (body.origin.lat, body.origin.lng) if body.origin else None
+        dest_t = (body.destination.lat, body.destination.lng) if body.destination else None
+
+        if body.use_fixture:
+            t = create_trip()
+            routing_mode = "fixture"
+        else:
+            if origin_t is None or dest_t is None:
+                raise HTTPException(
+                    400,
+                    "origin and destination are required unless useFixture is true",
+                )
+            t = create_trip(origin_t, dest_t)
+            if s.grab_api_key.strip() and s.use_directions_fixture != 1:
+                routing_mode = "grab"
+            elif t.encoded_polyline == "osrm":
+                routing_mode = "osrm"
+            else:
+                routing_mode = "fixture"
+
         TRIPS[t.id] = t
         return {
             "trip_id": t.id,
@@ -222,6 +259,7 @@ def create_app() -> FastAPI:
             "geojson": build_geojson(t),
             "baselines": [to_dict(b) for b in t.baselines],
             "segment_count": len(t.segments),
+            "routing_mode": routing_mode,
         }
 
     @app.get("/trips/{trip_id}")
