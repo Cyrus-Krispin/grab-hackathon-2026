@@ -1,173 +1,167 @@
 "use client";
 
+/**
+ * ComfortMap
+ *
+ * Map style: SKILL.md §2.8 — fetch GET {base}/api/style.json with
+ * Authorization: Bearer <key>, parse JSON, pass object to MapLibre.
+ * transformRequest adds Bearer to all subsequent tile requests to maps.grab.com.
+ * Falls back to Carto Positron if no key is configured.
+ */
+
 import maplibregl, { Map, type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
-
-/**
- * Map style: SKILL.md §2.8, §5 — `GET {base}/api/style.json` with
- * `Authorization: Bearer <key>`, pass the JSON to MapLibre (not `?key=` on the URL).
- * `transformRequest` still adds Bearer to tile/vector fetches to maps.grab.com.
- */
+import { getApiUrl } from "@/lib/config";
 
 export type SegmentGeo = GeoJSON.FeatureCollection<GeoJSON.LineString>;
 
-const SOURCE_ID = "route-comfort";
-const LAYER_ID = "route-comfort-line";
-
-const CARTO_POSITRON =
-  "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
-
-const COLOR_EXPR: maplibregl.DataDrivenPropertyValueSpecification<string> = [
-  "match",
-  ["get", "comfort"],
-  "green",
-  "#22c55e",
-  "yellow",
-  "#ca8a04",
-  "red",
-  "#ef4444",
-  "#22c55e",
-];
-
-type Props = {
-  geojson: SegmentGeo;
-  className?: string;
+export type RideEvent = {
+  id: string;
+  type: string;
+  lat: number;
+  lng: number;
+  attributed_to: string;
+  label: string;
+  icon: string;
+  magnitude: number;
 };
 
-function defaultGrabBase(): string {
-  return (
-    process.env.NEXT_PUBLIC_GRABMAPS_BASE_URL?.replace(/\/$/, "") ||
-    "https://maps.grab.com"
-  );
-}
+const SOURCE = "route-comfort";
+const LAYER  = "route-comfort-line";
+const CARTO  = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
-function fitBounds(
-  map: Map,
-  fc: GeoJSON.FeatureCollection<GeoJSON.LineString>
-): void {
-  if (!fc?.features?.length) return;
+// Data-driven color from segment `comfort` property
+const COLOR_EXPR: maplibregl.DataDrivenPropertyValueSpecification<string> = [
+  "match", ["get", "comfort"],
+  "green",  "#00b14f",
+  "yellow", "#f59e0b",
+  "red",    "#ef4444",
+  "#00b14f",
+];
+
+function fitRoute(map: Map, fc: SegmentGeo) {
   const coords: [number, number][] = [];
   for (const f of fc.features) {
-    for (const c of f.geometry?.coordinates || []) {
-      coords.push(c as [number, number]);
-    }
+    for (const c of (f.geometry?.coordinates ?? [])) coords.push(c as [number, number]);
   }
   if (!coords.length) return;
   const b = new maplibregl.LngLatBounds(coords[0], coords[0]);
   for (const c of coords) b.extend(c);
-  map.fitBounds(b, { padding: 64, maxZoom: 16, duration: 400 });
+  map.fitBounds(b, { padding: 60, maxZoom: 15, duration: 600 });
 }
 
-function needsGrabAuth(url: string, grabBase: string): boolean {
-  if (url.startsWith(grabBase)) return true;
-  if (grabBase.includes("maps.grab.com") && url.includes("maps.grab.com")) {
-    return true;
-  }
-  return false;
-}
 
-export function ComfortMap({ geojson, className }: Props) {
-  const container = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<Map | null>(null);
-  const geoRef = useRef(geojson);
-  const [mapReady, setMapReady] = useState(false);
+type Props = {
+  geojson: SegmentGeo;
+  events: RideEvent[];
+};
 
+export function ComfortMap({ geojson, events }: Props) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef       = useRef<Map | null>(null);
+  const geoRef       = useRef(geojson);
+  const markersRef   = useRef<Record<string, maplibregl.Marker>>({});
+  const [ready, setReady] = useState(false);
+
+  // Keep geoRef in sync
+  useEffect(() => { geoRef.current = geojson; }, [geojson]);
+
+  // Initialise map once
   useEffect(() => {
-    geoRef.current = geojson;
-  }, [geojson]);
-
-  useEffect(() => {
-    const el = container.current;
+    const el = containerRef.current;
     if (!el) return;
-
-    const grabBase = defaultGrabBase();
-    const key = process.env.NEXT_PUBLIC_GRABMAPS_API_KEY;
-
-    let map: Map | null = null;
     let alive = true;
+    let map: Map | null = null;
 
     (async () => {
-      let style: string | StyleSpecification;
-      if (key) {
-        const styleRes = await fetch(`${grabBase}/api/style.json`, {
-          headers: { Authorization: `Bearer ${key}` },
-        });
-        if (!styleRes.ok) {
-          if (!alive) return;
-          console.warn("Grab style.json failed, using fallback basemap", styleRes.status);
-          style = CARTO_POSITRON;
-        } else {
-          style = (await styleRes.json()) as StyleSpecification;
-        }
-      } else {
-        style = CARTO_POSITRON;
+      // Style fetched from our backend — keeps the GrabMaps API key server-side
+      let style: string | StyleSpecification = CARTO;
+      try {
+        const res = await fetch(`${getApiUrl()}/map-style`);
+        if (res.ok) style = (await res.json()) as StyleSpecification;
+        else console.warn("Backend /map-style →", res.status, "— using fallback");
+      } catch (err) {
+        console.warn("/map-style fetch failed:", err);
       }
       if (!alive || !el) return;
 
       map = new maplibregl.Map({
         container: el,
         style,
-        center: [103.833, 1.304],
-        zoom: 11.5,
-        transformRequest: (url, _resourceType) => {
-          if (key && needsGrabAuth(url, grabBase)) {
-            return { url, headers: { Authorization: `Bearer ${key}` } };
-          }
-          return { url };
-        },
+        center: [103.848, 1.328],
+        zoom: 12,
       });
+
       map.addControl(new maplibregl.NavigationControl(), "top-right");
       mapRef.current = map;
 
       map.on("load", () => {
         if (!map) return;
         const g = geoRef.current;
-        map.addSource(SOURCE_ID, { type: "geojson", data: g });
+        map.addSource(SOURCE, { type: "geojson", data: g });
         map.addLayer({
-          id: LAYER_ID,
+          id: LAYER,
           type: "line",
-          source: SOURCE_ID,
+          source: SOURCE,
           layout: { "line-join": "round", "line-cap": "round" },
           paint: {
-            "line-width": 6,
+            "line-width": ["interpolate", ["linear"], ["zoom"], 11, 4, 15, 8],
             "line-color": COLOR_EXPR,
           },
         });
-        fitBounds(map, g);
-        setMapReady(true);
+        fitRoute(map, g);
+        setReady(true);
       });
     })();
 
     return () => {
       alive = false;
-      setMapReady(false);
-      if (map) {
-        map.remove();
-        map = null;
-      }
+      setReady(false);
+      Object.values(markersRef.current).forEach((m) => m.remove());
+      markersRef.current = {};
+      map?.remove();
       mapRef.current = null;
     };
   }, []);
 
+  // Update route source when geojson changes
   useEffect(() => {
-    if (!mapReady) return;
+    if (!ready) return;
+    const src = mapRef.current?.getSource(SOURCE) as maplibregl.GeoJSONSource | undefined;
+    if (src) src.setData(geojson);
+  }, [geojson, ready]);
+
+  // Sync event markers
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
     const map = mapRef.current;
-    if (!map) return;
-    const src = map.getSource(SOURCE_ID) as maplibregl.GeoJSONSource | undefined;
-    if (src) {
-      src.setData(geojson);
-      fitBounds(map, geojson);
+    const existing = markersRef.current;
+
+    // Add new markers
+    for (const ev of events) {
+      if (existing[ev.id]) continue;
+      const el = document.createElement("div");
+      el.className = "event-marker";
+      el.textContent = ev.icon;
+      el.title = `${ev.label} — ${ev.attributed_to}`;
+      const marker = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat([ev.lng, ev.lat])
+        .setPopup(
+          new maplibregl.Popup({ offset: 14, closeButton: false }).setHTML(
+            `<div style="background:#18181b;color:#fafafa;padding:6px 10px;border-radius:6px;font-size:12px;line-height:1.5">
+              <strong>${ev.icon} ${ev.label}</strong><br/>
+              Attributed to: <em>${ev.attributed_to}</em><br/>
+              Magnitude: ${ev.magnitude.toFixed(2)}
+            </div>`
+          )
+        )
+        .addTo(map);
+      existing[ev.id] = marker;
     }
-  }, [geojson, mapReady]);
+  }, [events, ready]);
 
   return (
-    <div
-      ref={container}
-      className={
-        className ||
-        "h-[420px] w-full rounded-lg border border-zinc-200 dark:border-zinc-800 shadow-sm"
-      }
-    />
+    <div ref={containerRef} className="w-full h-full" />
   );
 }

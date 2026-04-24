@@ -6,8 +6,8 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# apps/api/app/config.py -> monorepo root = two levels up
-_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+# apps/api/app/config.py -> monorepo root = three levels up (app/ -> api/ -> apps/ -> root)
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 
 class Settings(BaseSettings):

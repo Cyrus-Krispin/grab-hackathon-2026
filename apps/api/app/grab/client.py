@@ -7,7 +7,7 @@ from typing import Any, List, Tuple
 import httpx
 
 from app.config import get_settings
-from app.polyline_flex import decode_path
+from app.grab.polyline import decode_path
 
 
 def _load_fixture_path() -> str:
