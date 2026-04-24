@@ -25,11 +25,11 @@ class Settings(BaseSettings):
     grab_api_key: str = Field(default="", validation_alias="GRABMAPS_API_KEY")
     use_directions_fixture: int = Field(default=0, validation_alias="USE_DIRECTIONS_FIXTURE")
 
-    # Fixed Singapore O/D (lat, lng)
-    demo_origin_lat: float = 1.3048
-    demo_origin_lng: float = 103.8324
-    demo_dest_lat: float = 1.3505
-    demo_dest_lng: float = 103.8488
+    # O/D: Changi Airport T3 → Grab HQ (one-north, 3 Media Close)
+    demo_origin_lat: float = 1.359029
+    demo_origin_lng: float = 103.988172
+    demo_dest_lat: float = 1.299801
+    demo_dest_lng: float = 103.787581
 
 
 @lru_cache

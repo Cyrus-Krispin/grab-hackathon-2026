@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ComfortMap, type RideEvent, type SegmentGeo } from "./ComfortMap";
+import { ComfortMap, type CurrentPosition, type RideEvent, type SegmentGeo } from "./ComfortMap";
 import { getApiUrl, tripWsUrl } from "@/lib/config";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ type LiveState = {
   comfort: Comfort;
   current_segment: number;
   segment_count: number;
+  position: CurrentPosition;
   metrics: {
     lateral_mps2: number;
     brake_mps2: number;
@@ -168,6 +169,7 @@ export function RideComfort() {
               comfort: msg.comfort,
               current_segment: msg.current_segment,
               segment_count: msg.segment_count,
+              position: msg.position,
               metrics: msg.metrics,
             });
             if (msg.segment_geojson) setGeojson(msg.segment_geojson);
@@ -257,57 +259,58 @@ export function RideComfort() {
   const comfort = live?.comfort ?? "green";
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
-      {/* ── Map (left) ───────────────────────────────────────────────────── */}
-      <div className="flex-1 relative">
-        <ComfortMap geojson={geojson} events={events} />
+    <div className="relative h-full w-full overflow-hidden bg-zinc-950">
+      <ComfortMap geojson={geojson} events={events} currentPosition={live?.position} />
 
-        {/* Comfort badge overlay */}
+      <div className="pointer-events-none absolute inset-0 z-10">
+        <div className="absolute left-4 top-4 rounded-lg border border-zinc-200 bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
+          <div className="flex items-center gap-2">
+            <span className="text-lg font-bold" style={{ color: "#00b14f" }}>Grab</span>
+            <span className="text-sm font-medium text-zinc-800">Comfort Intelligence</span>
+          </div>
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+            <span className={`h-1.5 w-1.5 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
+            {phase === "running"
+              ? wsReady ? "Connected · simulating" : "Connecting..."
+              : phase === "done" ? "Trip complete" : "Ready"}
+          </div>
+        </div>
+
         {phase === "running" && live && (
-          <div className="absolute top-4 left-4 flex items-center gap-2 rounded-full px-4 py-2 bg-zinc-900/90 backdrop-blur border border-zinc-700 shadow-lg">
+          <div className="absolute left-4 top-24 flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-4 py-2 shadow-xl backdrop-blur">
             <span
-              className={`w-3 h-3 rounded-full pulse-${comfort}`}
+              className={`h-3 w-3 rounded-full pulse-${comfort}`}
               style={{ background: COMFORT_COLORS[comfort] }}
             />
             <span className="text-sm font-semibold" style={{ color: COMFORT_COLORS[comfort] }}>
               {COMFORT_LABELS[comfort]}
             </span>
-            <span className="text-xs text-zinc-500 ml-1">
-              seg {(live.current_segment ?? 0) + 1}/{live.segment_count ?? "—"}
+            <span className="ml-1 text-xs text-zinc-500">
+              seg {(live.current_segment ?? 0) + 1}/{live.segment_count ?? "-"}
             </span>
           </div>
         )}
 
-        {/* Legend */}
-        <div className="absolute bottom-8 left-4 flex gap-3 text-xs text-zinc-400 bg-zinc-900/80 backdrop-blur px-3 py-2 rounded-lg border border-zinc-800">
+        <div className="absolute bottom-6 left-4 flex gap-3 rounded-lg border border-zinc-200 bg-white/90 px-3 py-2 text-xs text-zinc-600 shadow-xl backdrop-blur">
           {(["green","yellow","red"] as Comfort[]).map((c) => (
             <span key={c} className="flex items-center gap-1">
-              <span className="w-3 h-1.5 rounded-full inline-block" style={{ background: COMFORT_COLORS[c] }} />
+              <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: COMFORT_COLORS[c] }} />
               {COMFORT_LABELS[c]}
             </span>
           ))}
         </div>
-      </div>
 
-      {/* ── Control Panel (right) ─────────────────────────────────────────── */}
-      <div className="w-80 flex flex-col bg-zinc-950 border-l border-zinc-800 overflow-y-auto">
-        {/* Header */}
-        <div className="px-4 py-3 border-b border-zinc-800 flex items-center gap-2">
-          <span className="text-lg font-bold" style={{ color: "#00b14f" }}>Grab</span>
-          <span className="text-sm text-zinc-300 font-medium">Comfort Intelligence</span>
-        </div>
-
-        <div className="flex flex-col gap-4 p-4 flex-1">
+        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex max-h-[72vh] flex-col overflow-y-auto rounded-lg border border-zinc-200 bg-white/95 p-4 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:top-4 md:w-80 md:max-h-none">
           {/* ── Idle: pre-trip ────────────────────────────────────────── */}
           {phase === "idle" && (
             <div className="flex flex-col gap-4">
-              <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-4 text-sm text-zinc-400 leading-relaxed">
-                <p className="text-zinc-200 font-medium mb-1">How it works</p>
-                <p>Gyroscope + accelerometer data is mapped to route segments. Events are detected and attributed to <span className="text-blue-400">driver</span>, <span className="text-orange-400">road</span>, <span className="text-purple-400">traffic</span>, or <span className="text-emerald-400">route</span> difficulty.</p>
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-sm leading-relaxed text-zinc-600">
+                <p className="text-zinc-800 font-medium mb-1">How it works</p>
+                <p>Gyroscope + accelerometer data is mapped to route segments. Events are detected and attributed to <span className="text-blue-600">driver</span>, <span className="text-orange-600">road</span>, <span className="text-purple-600">traffic</span>, or <span className="text-emerald-600">route</span> difficulty.</p>
               </div>
               <button
                 onClick={startTrip}
-                className="w-full rounded-xl py-3 font-semibold text-white text-sm transition-all active:scale-95"
+                className="w-full rounded-lg py-3 text-sm font-semibold text-white transition-all active:scale-95"
                 style={{ background: "#00b14f" }}
               >
                 Book & Start Trip
@@ -326,13 +329,13 @@ export function RideComfort() {
               </div>
 
               {events.length > 0 && (
-                <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-                  <p className="text-xs font-medium text-zinc-400 mb-2">Detected Events</p>
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
+                  <p className="text-xs font-medium text-zinc-600 mb-2">Detected Events</p>
                   <ul className="flex flex-col gap-1.5">
                     {events.slice(-5).reverse().map((ev) => (
                       <li key={ev.id} className="flex items-center gap-2 text-xs">
                         <span>{ev.icon}</span>
-                        <span className="text-zinc-300 flex-1">{ev.label}</span>
+                        <span className="text-zinc-700 flex-1">{ev.label}</span>
                         <span
                           className="rounded px-1.5 py-0.5 text-[10px] font-medium"
                           style={{
@@ -350,7 +353,7 @@ export function RideComfort() {
 
               <button
                 onClick={endTrip}
-                className="w-full rounded-xl py-2.5 font-medium text-sm border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                className="w-full rounded-lg border border-zinc-300 bg-white py-2.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
               >
                 End Trip &amp; Score
               </button>
@@ -361,7 +364,7 @@ export function RideComfort() {
           {phase === "done" && result && (
             <>
               {/* Score */}
-              <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-4 text-center">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-center">
                 <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Comfort Score</p>
                 <p
                   className="text-5xl font-bold"
@@ -375,42 +378,42 @@ export function RideComfort() {
                   {result.score.toFixed(0)}
                 </p>
                 <p className="text-xs text-zinc-500 mt-0.5">out of 100</p>
-                <p className="text-sm text-zinc-300 mt-2 leading-snug">{result.summary}</p>
+                <p className="text-sm text-zinc-700 mt-2 leading-snug">{result.summary}</p>
               </div>
 
               {/* Stats strip */}
               <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2">
-                  <p className="text-zinc-200 font-bold text-lg" style={{ color: "#00b14f" }}>{result.stats.green_segments}</p>
+                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-2">
+                  <p className="text-zinc-800 font-bold text-lg" style={{ color: "#00b14f" }}>{result.stats.green_segments}</p>
                   <p className="text-zinc-500">Smooth</p>
                 </div>
-                <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2">
-                  <p className="text-zinc-200 font-bold text-lg" style={{ color: "#f59e0b" }}>{result.stats.yellow_segments}</p>
+                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-2">
+                  <p className="text-zinc-800 font-bold text-lg" style={{ color: "#f59e0b" }}>{result.stats.yellow_segments}</p>
                   <p className="text-zinc-500">Bumpy</p>
                 </div>
-                <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2">
-                  <p className="text-zinc-200 font-bold text-lg" style={{ color: "#ef4444" }}>{result.stats.red_segments}</p>
+                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-2">
+                  <p className="text-zinc-800 font-bold text-lg" style={{ color: "#ef4444" }}>{result.stats.red_segments}</p>
                   <p className="text-zinc-500">Rough</p>
                 </div>
               </div>
 
               {/* Attribution */}
-              <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-                <p className="text-xs font-medium text-zinc-400 mb-2">Discomfort Attribution</p>
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
+                <p className="text-xs font-medium text-zinc-600 mb-2">Discomfort Attribution</p>
                 <div className="flex flex-col gap-1.5">
                   {Object.entries(result.attribution)
                     .filter(([, v]) => v > 0)
                     .sort(([, a], [, b]) => b - a)
                     .map(([key, pct]) => (
                       <div key={key} className="flex items-center gap-2">
-                        <span className="text-xs w-14 text-zinc-400 capitalize">{key}</span>
-                        <div className="flex-1 h-2 rounded-full bg-zinc-800 overflow-hidden">
+                        <span className="text-xs w-14 text-zinc-600 capitalize">{key}</span>
+                        <div className="flex-1 h-2 rounded-full bg-zinc-200 overflow-hidden">
                           <div
                             className="h-full rounded-full transition-all"
                             style={{ width: `${pct}%`, background: ATTR_COLORS[key] ?? "#71717a" }}
                           />
                         </div>
-                        <span className="text-xs text-zinc-400 w-8 text-right">{pct}%</span>
+                        <span className="text-xs text-zinc-600 w-8 text-right">{pct}%</span>
                       </div>
                     ))}
                 </div>
@@ -418,12 +421,12 @@ export function RideComfort() {
 
               {/* Driver coaching */}
               {result.coaching.length > 0 && (
-                <div className="rounded-xl bg-blue-950/40 border border-blue-900/50 p-3">
-                  <p className="text-xs font-medium text-blue-400 mb-2">Driver Coaching</p>
+                <div className="rounded-lg border border-blue-200 bg-blue-50/95 p-3">
+                  <p className="text-xs font-medium text-blue-700 mb-2">Driver Coaching</p>
                   <ul className="flex flex-col gap-1">
                     {result.coaching.map((hint, i) => (
-                      <li key={i} className="text-xs text-zinc-300 flex gap-1.5">
-                        <span className="text-blue-400 mt-0.5">›</span>
+                      <li key={i} className="text-xs text-zinc-700 flex gap-1.5">
+                        <span className="text-blue-700 mt-0.5">›</span>
                         {hint}
                       </li>
                     ))}
@@ -433,15 +436,15 @@ export function RideComfort() {
 
               {/* All events */}
               {result.events.length > 0 && (
-                <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-3">
-                  <p className="text-xs font-medium text-zinc-400 mb-2">
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
+                  <p className="text-xs font-medium text-zinc-600 mb-2">
                     All Events ({result.events.length})
                   </p>
                   <ul className="flex flex-col gap-1.5 max-h-40 overflow-y-auto">
                     {result.events.map((ev) => (
                       <li key={ev.id} className="flex items-center gap-2 text-xs">
                         <span>{ev.icon}</span>
-                        <span className="text-zinc-300 flex-1">{ev.label}</span>
+                        <span className="text-zinc-700 flex-1">{ev.label}</span>
                         <span
                           className="rounded px-1.5 py-0.5 text-[10px] font-medium"
                           style={{
@@ -459,7 +462,7 @@ export function RideComfort() {
 
               <button
                 onClick={startTrip}
-                className="w-full rounded-xl py-2.5 font-medium text-sm border border-zinc-700 text-zinc-300 hover:bg-zinc-800 transition-colors"
+                className="w-full rounded-lg border border-zinc-300 bg-white py-2.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
               >
                 New Trip
               </button>
@@ -468,18 +471,10 @@ export function RideComfort() {
 
           {/* Error */}
           {err && (
-            <div className="rounded-lg border border-red-900 bg-red-950/40 p-3 text-xs text-red-300">
+            <div className="rounded-lg border border-red-200 bg-red-50/95 p-3 text-xs text-red-700">
               {err}
             </div>
           )}
-
-          {/* WS status dot */}
-          <div className="flex items-center gap-1.5 text-xs text-zinc-600 mt-auto">
-            <span className={`w-1.5 h-1.5 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
-            {phase === "running"
-              ? wsReady ? "Connected · simulating" : "Connecting…"
-              : phase === "done" ? "Trip complete" : "Ready"}
-          </div>
         </div>
       </div>
     </div>
@@ -490,9 +485,9 @@ export function RideComfort() {
 
 function Metric({ label, value, unit }: { label: string; value: string; unit: string }) {
   return (
-    <div className="rounded-lg bg-zinc-900 border border-zinc-800 p-2.5">
+    <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-2.5">
       <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
-      <p className="text-lg font-bold text-zinc-100 leading-tight">
+      <p className="text-lg font-bold text-zinc-900 leading-tight">
         {value} <span className="text-xs font-normal text-zinc-500">{unit}</span>
       </p>
     </div>

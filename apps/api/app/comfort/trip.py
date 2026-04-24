@@ -33,6 +33,15 @@ def _worst(a: Comfort, b: Comfort) -> Comfort:
     return a if _rank(a) >= _rank(b) else b
 
 
+def _bearing_deg(a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    lat1, lon1 = map(math.radians, a)
+    lat2, lon2 = map(math.radians, b)
+    dlon = lon2 - lon1
+    y = math.sin(dlon) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dlon)
+    return (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+
+
 @dataclass
 class Trip:
     id: str
@@ -103,6 +112,11 @@ def on_sample(
     prev = trip.history[-1] if trip.history else None
     dt_s = max(0.01, (t_ms - float(prev["t_ms"])) / 1000.0) if prev else 0.05
     jerk = ((ax - float(prev["ax"])) / dt_s) if prev and "ax" in prev else 0.0
+    heading = (
+        _bearing_deg((float(prev["lat"]), float(prev["lng"])), (lat, lng))
+        if prev and "lat" in prev and "lng" in prev
+        else 0.0
+    )
 
     lateral = ay
     brake = max(0.0, -ax)
@@ -141,7 +155,7 @@ def on_sample(
         trip.events.append(ev)
         new_events.append(ev)
 
-    trip.history.append({"t_ms": t_ms, "ax": ax, "ay": ay, "az": az, "sid": sid})
+    trip.history.append({"t_ms": t_ms, "lat": lat, "lng": lng, "ax": ax, "ay": ay, "az": az, "sid": sid})
     if sid in trip.segment_comfort:
         trip.segment_comfort[sid] = _worst(trip.segment_comfort[sid], comfort)
     trip.last_t_ms = t_ms
@@ -152,6 +166,11 @@ def on_sample(
         "segment_count": len(trip.segments),
         "comfort": comfort,
         "in_range": comfort != "red",
+        "position": {
+            "lat": round(lat, 6),
+            "lng": round(lng, 6),
+            "heading_deg": round(heading, 1),
+        },
         "metrics": {
             "lateral_mps2": round(lateral, 2),
             "brake_mps2": round(brake, 2),

@@ -27,6 +27,12 @@ export type RideEvent = {
   magnitude: number;
 };
 
+export type CurrentPosition = {
+  lat: number;
+  lng: number;
+  heading_deg: number;
+};
+
 const SOURCE = "route-comfort";
 const LAYER  = "route-comfort-line";
 const CARTO  = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
@@ -55,13 +61,16 @@ function fitRoute(map: Map, fc: SegmentGeo) {
 type Props = {
   geojson: SegmentGeo;
   events: RideEvent[];
+  currentPosition?: CurrentPosition | null;
 };
 
-export function ComfortMap({ geojson, events }: Props) {
+export function ComfortMap({ geojson, events, currentPosition }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef       = useRef<Map | null>(null);
   const geoRef       = useRef(geojson);
   const markersRef   = useRef<Record<string, maplibregl.Marker>>({});
+  const carMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const fittedRouteRef = useRef(false);
   const [ready, setReady] = useState(false);
 
   // Keep geoRef in sync
@@ -89,7 +98,7 @@ export function ComfortMap({ geojson, events }: Props) {
       map = new maplibregl.Map({
         container: el,
         style,
-        center: [103.848, 1.328],
+        center: [103.888, 1.329],
         zoom: 12,
       });
 
@@ -120,6 +129,8 @@ export function ComfortMap({ geojson, events }: Props) {
       setReady(false);
       Object.values(markersRef.current).forEach((m) => m.remove());
       markersRef.current = {};
+      carMarkerRef.current?.remove();
+      carMarkerRef.current = null;
       map?.remove();
       mapRef.current = null;
     };
@@ -128,9 +139,49 @@ export function ComfortMap({ geojson, events }: Props) {
   // Update route source when geojson changes
   useEffect(() => {
     if (!ready) return;
-    const src = mapRef.current?.getSource(SOURCE) as maplibregl.GeoJSONSource | undefined;
+    const map = mapRef.current;
+    const src = map?.getSource(SOURCE) as maplibregl.GeoJSONSource | undefined;
     if (src) src.setData(geojson);
+    if (!geojson.features.length) {
+      fittedRouteRef.current = false;
+      carMarkerRef.current?.remove();
+      carMarkerRef.current = null;
+      return;
+    }
+    if (map && !fittedRouteRef.current) {
+      fitRoute(map, geojson);
+      fittedRouteRef.current = true;
+    }
   }, [geojson, ready]);
+
+  // Move the live car pointer as samples arrive
+  useEffect(() => {
+    if (!ready || !mapRef.current || !currentPosition) return;
+    if (!Number.isFinite(currentPosition.lng) || !Number.isFinite(currentPosition.lat)) return;
+    const map = mapRef.current;
+    const lngLat: [number, number] = [currentPosition.lng, currentPosition.lat];
+    if (!carMarkerRef.current) {
+      const el = document.createElement("div");
+      el.className = "car-marker";
+      el.title = "Current ride position";
+      carMarkerRef.current = new maplibregl.Marker({
+        element: el,
+        anchor: "center",
+        rotationAlignment: "map",
+      })
+        .setLngLat(lngLat)
+        .setRotation(currentPosition.heading_deg)
+        .addTo(map);
+    }
+    carMarkerRef.current
+      .setLngLat(lngLat)
+      .setRotation(currentPosition.heading_deg);
+    map.easeTo({
+      center: lngLat,
+      duration: 250,
+      essential: true,
+    });
+  }, [currentPosition, ready]);
 
   // Sync event markers
   useEffect(() => {
