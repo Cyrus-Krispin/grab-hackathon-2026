@@ -38,6 +38,8 @@ export type PlanPin = { lat: number; lng: number; role: "start" | "end" };
 const SOURCE = "route-comfort";
 const PLAN_START_ID = "_plan-start";
 const PLAN_END_ID = "_plan-end";
+const ROUTE_START_ID = "_route-start";
+const ROUTE_END_ID = "_route-end";
 const LAYER  = "route-comfort-line";
 const CARTO  = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
@@ -61,6 +63,20 @@ function fitRoute(map: Map, fc: SegmentGeo) {
   map.fitBounds(b, { padding: 60, maxZoom: 15, duration: 600 });
 }
 
+function routeEndpoints(fc: SegmentGeo): PlanPin[] {
+  const coords: [number, number][] = [];
+  for (const f of fc.features) {
+    for (const c of (f.geometry?.coordinates ?? [])) coords.push(c as [number, number]);
+  }
+  if (coords.length < 2) return [];
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  return [
+    { role: "start", lng: first[0], lat: first[1] },
+    { role: "end", lng: last[0], lat: last[1] },
+  ];
+}
+
 
 type Props = {
   geojson: SegmentGeo;
@@ -75,6 +91,8 @@ export function ComfortMap({ geojson, events, currentPosition, pickPins }: Props
   const geoRef       = useRef(geojson);
   const markersRef   = useRef<Record<string, maplibregl.Marker>>({});
   const carMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const carPositionRef = useRef<CurrentPosition | null>(null);
+  const carFrameRef = useRef<number | null>(null);
   const fittedRouteRef = useRef(false);
   const [ready, setReady] = useState(false);
 
@@ -134,6 +152,9 @@ export function ComfortMap({ geojson, events, currentPosition, pickPins }: Props
       setReady(false);
       Object.values(markersRef.current).forEach((m) => m.remove());
       markersRef.current = {};
+      if (carFrameRef.current) cancelAnimationFrame(carFrameRef.current);
+      carFrameRef.current = null;
+      carPositionRef.current = null;
       carMarkerRef.current?.remove();
       carMarkerRef.current = null;
       map?.remove();
@@ -149,13 +170,41 @@ export function ComfortMap({ geojson, events, currentPosition, pickPins }: Props
     if (src) src.setData(geojson);
     if (!geojson.features.length) {
       fittedRouteRef.current = false;
+      if (carFrameRef.current) cancelAnimationFrame(carFrameRef.current);
+      carFrameRef.current = null;
+      carPositionRef.current = null;
       carMarkerRef.current?.remove();
       carMarkerRef.current = null;
+      for (const k of [ROUTE_START_ID, ROUTE_END_ID]) {
+        markersRef.current[k]?.remove();
+        delete markersRef.current[k];
+      }
       return;
     }
     if (map && !fittedRouteRef.current) {
       fitRoute(map, geojson);
       fittedRouteRef.current = true;
+    }
+  }, [geojson, ready]);
+
+  // Fixed route start / end markers after a route is loaded
+  useEffect(() => {
+    if (!ready || !mapRef.current) return;
+    const map = mapRef.current;
+    const existing = markersRef.current;
+    for (const k of [ROUTE_START_ID, ROUTE_END_ID]) {
+      existing[k]?.remove();
+      delete existing[k];
+    }
+    for (const pin of routeEndpoints(geojson)) {
+      const id = pin.role === "start" ? ROUTE_START_ID : ROUTE_END_ID;
+      const el = document.createElement("div");
+      el.className = `plan-pin plan-pin-${pin.role}`;
+      el.textContent = pin.role === "start" ? "A" : "B";
+      el.title = pin.role === "start" ? "Route start" : "Route end";
+      existing[id] = new maplibregl.Marker({ element: el, anchor: "center" })
+        .setLngLat([pin.lng, pin.lat])
+        .addTo(map);
     }
   }, [geojson, ready]);
 
@@ -177,13 +226,47 @@ export function ComfortMap({ geojson, events, currentPosition, pickPins }: Props
         .setLngLat(lngLat)
         .setRotation(currentPosition.heading_deg)
         .addTo(map);
+      carPositionRef.current = currentPosition;
+      map.easeTo({
+        center: lngLat,
+        duration: 350,
+        essential: true,
+      });
+      return;
     }
-    carMarkerRef.current
-      .setLngLat(lngLat)
-      .setRotation(currentPosition.heading_deg);
+
+    if (carFrameRef.current) cancelAnimationFrame(carFrameRef.current);
+    const from = carPositionRef.current ?? currentPosition;
+    const to = currentPosition;
+    const startedAt = performance.now();
+    const durationMs = 300;
+    const headingDelta = ((((to.heading_deg - from.heading_deg) % 360) + 540) % 360) - 180;
+
+    const animate = (now: number) => {
+      const raw = Math.min(1, (now - startedAt) / durationMs);
+      const progress = 1 - Math.pow(1 - raw, 3);
+      const next = {
+        lat: from.lat + (to.lat - from.lat) * progress,
+        lng: from.lng + (to.lng - from.lng) * progress,
+        heading_deg: (from.heading_deg + headingDelta * progress + 360) % 360,
+      };
+      carPositionRef.current = next;
+      carMarkerRef.current
+        ?.setLngLat([next.lng, next.lat])
+        .setRotation(next.heading_deg);
+
+      if (raw < 1) {
+        carFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        carFrameRef.current = null;
+        carPositionRef.current = to;
+      }
+    };
+
+    carFrameRef.current = requestAnimationFrame(animate);
     map.easeTo({
       center: lngLat,
-      duration: 250,
+      duration: 500,
       essential: true,
     });
   }, [currentPosition, ready]);

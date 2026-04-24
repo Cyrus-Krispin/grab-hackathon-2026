@@ -97,7 +97,7 @@ const INCIDENT_LIBRARY: IncidentApply[] = [
   (s, { rng }) => {
     s.ax = -5.0 + (rng() - 0.5) * 0.9;
     s.ay = 0.15 + rng() * 0.35;
-    s.spd = Math.max(12, 22 - rng() * 10);
+    s.speed_kmh = Math.max(12, 22 - rng() * 10);
   },
   // Vertical bump
   (s, { rng }) => {
@@ -106,13 +106,13 @@ const INCIDENT_LIBRARY: IncidentApply[] = [
   // Hard acceleration
   (s, { rng }) => {
     s.ax = 4.4 + rng() * 1.1;
-    s.spd = 68 + rng() * 14;
+    s.speed_kmh = 68 + rng() * 14;
   },
   // Brake + lateral (swerve)
   (s, { rng }) => {
     s.ax = -4.0 - rng() * 1.2;
     s.ay = 3.2 + rng() * 1.2;
-    s.spd = 28 + rng() * 18;
+    s.speed_kmh = 28 + rng() * 18;
   },
   // Second bump profile
   (s, { rng }) => {
@@ -120,7 +120,7 @@ const INCIDENT_LIBRARY: IncidentApply[] = [
   },
   // Speeding with turn
   (s, { naturalLateral, rng }) => {
-    s.spd = 88 + rng() * 16;
+    s.speed_kmh = 88 + rng() * 16;
     s.ay = Math.max(2.2, Math.abs(naturalLateral) * 0.9 + rng() * 1.4);
   },
 ];
@@ -168,16 +168,46 @@ function buildIncidentPlan(n: number, tripId: string): Map<number, IncidentApply
   return map;
 }
 
+function approxMeters(a: [number, number], b: [number, number]): number {
+  const meanLat = ((a[0] + b[0]) / 2) * Math.PI / 180;
+  const metersPerLat = 111_320;
+  const metersPerLng = 111_320 * Math.cos(meanLat);
+  const dy = (b[0] - a[0]) * metersPerLat;
+  const dx = (b[1] - a[1]) * metersPerLng;
+  return Math.hypot(dx, dy);
+}
+
+function densifyPath(path: [number, number][], targetStepM = 14): [number, number][] {
+  if (path.length < 2) return path;
+  const out: [number, number][] = [path[0]];
+
+  for (let i = 1; i < path.length; i++) {
+    const prev = path[i - 1];
+    const next = path[i];
+    const steps = Math.max(1, Math.ceil(approxMeters(prev, next) / targetStepM));
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps;
+      out.push([
+        prev[0] + (next[0] - prev[0]) * t,
+        prev[1] + (next[1] - prev[1]) * t,
+      ]);
+    }
+  }
+
+  return out;
+}
+
 /**
  * Motion stream from the route path: baseline noise + curvature-based lateral,
  * plus incidents placed at trip-unique indices with shuffled types and jittered magnitudes.
  */
 function buildSamples(path: [number, number][], tripId: string): Sample[] {
-  const n = path.length;
+  const densePath = densifyPath(path);
+  const n = densePath.length;
   const incidents = buildIncidentPlan(n, tripId);
   const rng = mulberry32(hashTripSeed(tripId) ^ 0x9e3779b9);
 
-  return path.map(([lat, lng], i) => {
+  return densePath.map(([lat, lng], i) => {
     const progress = i / Math.max(n - 1, 1);
 
     let spd = 55;
@@ -186,9 +216,9 @@ function buildSamples(path: [number, number][], tripId: string): Sample[] {
 
     let naturalLateral = 0;
     if (i > 0 && i < n - 1) {
-      const [la0, lo0] = path[i - 1];
-      const [la1, lo1] = path[i];
-      const [la2, lo2] = path[i + 1];
+      const [la0, lo0] = densePath[i - 1];
+      const [la1, lo1] = densePath[i];
+      const [la2, lo2] = densePath[i + 1];
       const b0 = Math.atan2(lo1 - lo0, la1 - la0);
       const b1 = Math.atan2(lo2 - lo1, la2 - la1);
       const delta = b1 - b0;
@@ -398,7 +428,7 @@ export function RideComfort() {
           void endTrip();
         }, 500);
       }
-    }, 120);
+    }, 80);
   }, [stopTimer, endTrip]);
 
   // Auto-run simulator once WS is open
@@ -427,41 +457,48 @@ export function RideComfort() {
 
       <div className="pointer-events-none absolute inset-0 z-10">
         <div className="absolute left-4 top-4 rounded-lg border border-zinc-200 bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-lg font-bold" style={{ color: "#00b14f" }}>Grab</span>
-                <span className="text-sm font-medium text-zinc-800">Comfort Intelligence</span>
-              </div>
-              <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
-                <span className={`h-1.5 w-1.5 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
-                {phase === "running"
-                  ? wsReady ? "Connected · simulating" : "Connecting..."
-                  : phase === "done" ? "Trip complete" : "Ready"}
-              </div>
-              {routingNote && phase === "running" && (
-                <p className="mt-2 max-w-[220px] text-[11px] leading-snug text-amber-700">{routingNote}</p>
-              )}
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-bold" style={{ color: "#00b14f" }}>Grab</span>
+              <span className="text-sm font-medium text-zinc-800">Comfort Intelligence</span>
             </div>
-            <Link
-              href="/analytics"
-              className="pointer-events-auto rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
-            >
-              Ops
-            </Link>
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+              <span className={`h-1.5 w-1.5 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
+              {phase === "running"
+                ? wsReady ? "Connected · simulating" : "Connecting..."
+                : phase === "done" ? "Trip complete" : "Ready"}
+            </div>
+            {routingNote && phase === "running" && (
+              <p className="mt-2 max-w-[220px] text-[11px] leading-snug text-amber-700">{routingNote}</p>
+            )}
           </div>
         </div>
 
-        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex max-h-[72vh] flex-col overflow-y-auto rounded-lg border border-zinc-200 bg-white/95 p-4 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:top-4 md:w-80 md:max-h-none">
+        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex max-h-[72vh] flex-col gap-5 overflow-y-auto rounded-lg border border-zinc-200 bg-white/95 p-5 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:top-4 md:w-80 md:max-h-none">
+          <div className="grid grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-sm font-medium">
+            <button
+              type="button"
+              className="rounded-md bg-white px-3 py-2 text-zinc-900 shadow-sm"
+            >
+              Monitor
+            </button>
+            <Link
+              href="/analytics"
+              className="rounded-md px-3 py-2 text-center text-zinc-600 transition-colors hover:bg-white/70 hover:text-zinc-900"
+            >
+              Analytics
+            </Link>
+          </div>
+
           {/* ── Idle: pre-trip ────────────────────────────────────────── */}
           {phase === "idle" && (
-            <div className="flex flex-col gap-4">
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-sm leading-relaxed text-zinc-600">
-                <p className="text-zinc-800 font-medium mb-1">How it works</p>
+            <div className="flex flex-col gap-5">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-5 text-sm leading-relaxed text-zinc-600">
+                <p className="mb-2 text-zinc-800 font-medium">How it works</p>
                 <p>Search any start and end in Singapore, then run a comfort simulation along the driving route. Events are attributed to <span className="text-blue-600">driver</span>, <span className="text-orange-600">road</span>, <span className="text-purple-600">traffic</span>, or <span className="text-emerald-600">route</span>.</p>
               </div>
 
-              <label className="flex cursor-pointer items-start gap-2 text-xs text-zinc-700">
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-700">
                 <input
                   type="checkbox"
                   className="mt-0.5 rounded border-zinc-300"
@@ -481,7 +518,7 @@ export function RideComfort() {
               </label>
 
               {!useDemoRoute && (
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-4">
                   <SingaporePlaceField label="From" value={startPlace} onChange={setStartPlace} />
                   <SingaporePlaceField label="To" value={endPlace} onChange={setEndPlace} />
                 </div>
@@ -501,7 +538,7 @@ export function RideComfort() {
           {/* ── Running: live metrics ─────────────────────────────────── */}
           {phase === "running" && (
             <>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <Metric label="Lateral G" value={`${(live?.metrics.lateral_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
                 <Metric label="Braking G" value={`${(live?.metrics.brake_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
                 <Metric label="Jerk" value={`${(live?.metrics.jerk_mps3 ?? 0).toFixed(1)}`} unit="m/s³" />
@@ -509,9 +546,9 @@ export function RideComfort() {
               </div>
 
               {events.length > 0 && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
-                  <p className="text-xs font-medium text-zinc-600 mb-2">Detected Events</p>
-                  <ul className="flex flex-col gap-1.5">
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                  <p className="mb-3 text-xs font-medium text-zinc-600">Detected Events</p>
+                  <ul className="flex flex-col gap-2">
                     {events.slice(-5).reverse().map((ev) => (
                       <li key={ev.id} className="flex items-center gap-2 text-xs">
                         <span>{ev.icon}</span>
@@ -533,7 +570,7 @@ export function RideComfort() {
 
               <button
                 onClick={endTrip}
-                className="w-full rounded-lg border border-zinc-300 bg-white py-2.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+                className="w-full rounded-lg border border-zinc-300 bg-white py-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
               >
                 End Trip &amp; Score
               </button>
