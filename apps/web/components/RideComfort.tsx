@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComfortMap, type CurrentPosition, type RideEvent, type SegmentGeo } from "./ComfortMap";
 import { getApiUrl, tripWsUrl } from "@/lib/config";
@@ -264,15 +265,25 @@ export function RideComfort() {
 
       <div className="pointer-events-none absolute inset-0 z-10">
         <div className="absolute left-4 top-4 rounded-lg border border-zinc-200 bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
-          <div className="flex items-center gap-2">
-            <span className="text-lg font-bold" style={{ color: "#00b14f" }}>Grab</span>
-            <span className="text-sm font-medium text-zinc-800">Comfort Intelligence</span>
-          </div>
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
-            <span className={`h-1.5 w-1.5 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
-            {phase === "running"
-              ? wsReady ? "Connected · simulating" : "Connecting..."
-              : phase === "done" ? "Trip complete" : "Ready"}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-lg font-bold" style={{ color: "#00b14f" }}>Grab</span>
+                <span className="text-sm font-medium text-zinc-800">Comfort Intelligence</span>
+              </div>
+              <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+                <span className={`h-1.5 w-1.5 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
+                {phase === "running"
+                  ? wsReady ? "Connected · simulating" : "Connecting..."
+                  : phase === "done" ? "Trip complete" : "Ready"}
+              </div>
+            </div>
+            <Link
+              href="/analytics"
+              className="pointer-events-auto rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+            >
+              Ops
+            </Link>
           </div>
         </div>
 
@@ -362,12 +373,12 @@ export function RideComfort() {
 
           {/* ── Done: score card ──────────────────────────────────────── */}
           {phase === "done" && result && (
-            <>
+            <div className="flex flex-col gap-4">
               {/* Score */}
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-center">
-                <p className="text-xs text-zinc-500 uppercase tracking-wider mb-1">Comfort Score</p>
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-5 text-center">
+                <p className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Comfort Score</p>
                 <p
-                  className="text-5xl font-bold"
+                  className="text-5xl font-bold leading-none"
                   style={{
                     color:
                       result.score >= 80 ? "#00b14f"
@@ -377,30 +388,30 @@ export function RideComfort() {
                 >
                   {result.score.toFixed(0)}
                 </p>
-                <p className="text-xs text-zinc-500 mt-0.5">out of 100</p>
-                <p className="text-sm text-zinc-700 mt-2 leading-snug">{result.summary}</p>
+                <p className="mt-2 text-xs text-zinc-500">out of 100</p>
+                <p className="mt-4 text-sm leading-snug text-zinc-700">{result.summary}</p>
               </div>
 
               {/* Stats strip */}
-              <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-2">
+              <div className="grid grid-cols-3 gap-3 text-center text-xs">
+                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-3">
                   <p className="text-zinc-800 font-bold text-lg" style={{ color: "#00b14f" }}>{result.stats.green_segments}</p>
                   <p className="text-zinc-500">Smooth</p>
                 </div>
-                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-2">
+                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-3">
                   <p className="text-zinc-800 font-bold text-lg" style={{ color: "#f59e0b" }}>{result.stats.yellow_segments}</p>
                   <p className="text-zinc-500">Bumpy</p>
                 </div>
-                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-2">
+                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-3">
                   <p className="text-zinc-800 font-bold text-lg" style={{ color: "#ef4444" }}>{result.stats.red_segments}</p>
                   <p className="text-zinc-500">Rough</p>
                 </div>
               </div>
 
               {/* Attribution */}
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
-                <p className="text-xs font-medium text-zinc-600 mb-2">Discomfort Attribution</p>
-                <div className="flex flex-col gap-1.5">
+              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                <p className="mb-3 text-xs font-medium text-zinc-600">Discomfort Attribution</p>
+                <div className="flex flex-col gap-2.5">
                   {Object.entries(result.attribution)
                     .filter(([, v]) => v > 0)
                     .sort(([, a], [, b]) => b - a)
@@ -421,9 +432,9 @@ export function RideComfort() {
 
               {/* Driver coaching */}
               {result.coaching.length > 0 && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50/95 p-3">
-                  <p className="text-xs font-medium text-blue-700 mb-2">Driver Coaching</p>
-                  <ul className="flex flex-col gap-1">
+                <div className="rounded-lg border border-blue-200 bg-blue-50/95 p-4">
+                  <p className="mb-3 text-xs font-medium text-blue-700">Driver Coaching</p>
+                  <ul className="flex flex-col gap-2">
                     {result.coaching.map((hint, i) => (
                       <li key={i} className="text-xs text-zinc-700 flex gap-1.5">
                         <span className="text-blue-700 mt-0.5">›</span>
@@ -436,11 +447,11 @@ export function RideComfort() {
 
               {/* All events */}
               {result.events.length > 0 && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
-                  <p className="text-xs font-medium text-zinc-600 mb-2">
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                  <p className="mb-3 text-xs font-medium text-zinc-600">
                     All Events ({result.events.length})
                   </p>
-                  <ul className="flex flex-col gap-1.5 max-h-40 overflow-y-auto">
+                  <ul className="flex max-h-40 flex-col gap-2 overflow-y-auto">
                     {result.events.map((ev) => (
                       <li key={ev.id} className="flex items-center gap-2 text-xs">
                         <span>{ev.icon}</span>
@@ -462,11 +473,11 @@ export function RideComfort() {
 
               <button
                 onClick={startTrip}
-                className="w-full rounded-lg border border-zinc-300 bg-white py-2.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white py-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
               >
                 New Trip
               </button>
-            </>
+            </div>
           )}
 
           {/* Error */}
