@@ -10,6 +10,8 @@ HARSH_ACCEL_THRESH = 3.5    # ax when accelerating
 SHARP_TURN_THRESH = 3.0     # |ay|
 BUMP_THRESH = 2.8           # |az - 9.81|
 SPEEDING_MARGIN_KMH = 15.0  # over limit before flagging with lateral
+SPEED_OVER_LIMIT_KMH = 5.0  # plain speeding vs segment limit
+JERK_ROUGH_THRESH = 22.0  # m/s³ — uneven / snappy longitudinal changes
 
 # Min ms between same event type on same segment
 COOLDOWN_MS = 2500.0
@@ -17,17 +19,21 @@ COOLDOWN_MS = 2500.0
 _LABELS: Dict[str, str] = {
     "harsh_brake": "Sudden braking",
     "harsh_accel": "Hard acceleration",
+    "uneven_accel": "Uneven acceleration",
     "sharp_turn": "Sharp lateral movement",
     "bump": "Road surface bump",
-    "speeding_risky": "Speeding with sharp movement",
+    "speeding_risky": "High speed while turning",
+    "speeding": "Over posted speed limit",
 }
 
 _ICONS: Dict[str, str] = {
     "harsh_brake": "🛑",
     "harsh_accel": "🚀",
+    "uneven_accel": "📈",
     "sharp_turn": "🔄",
     "bump": "🚧",
     "speeding_risky": "⚡",
+    "speeding": "🏎️",
 }
 
 
@@ -40,7 +46,7 @@ class RideEvent:
     lng: float
     segment_id: int
     magnitude: float
-    attributed_to: str  # driver | road | traffic | route
+    attributed_to: str  # vehicle | road | traffic | route — context, not a person
     label: str
 
     def to_dict(self) -> Dict[str, Any]:
@@ -59,19 +65,19 @@ class RideEvent:
 
 
 def _attribute_brake(curvature: float, lateral: float) -> str:
-    """Braking with lateral swerve → driver; braking on straight → likely traffic stop."""
+    """Braking with lateral component vs straight-line stop vs mixed."""
     if abs(lateral) > 1.5:
-        return "driver"
+        return "vehicle"
     if curvature < 0.005:
         return "traffic"
-    return "driver"
+    return "vehicle"
 
 
 def _attribute_turn(curvature: float) -> str:
-    """Sharp turn on a genuinely curved segment → route geometry; else → driver."""
+    """Sharp lateral motion on curved segment vs straighter geometry."""
     if curvature > 0.018:
         return "route"
-    return "driver"
+    return "vehicle"
 
 
 def make_event(
@@ -91,7 +97,7 @@ def make_event(
     elif etype == "bump":
         attr = "road"
     else:
-        attr = "driver"
+        attr = "vehicle"
 
     return RideEvent(
         id=str(uuid.uuid4())[:8],

@@ -12,8 +12,10 @@ from app.comfort.events import (
     COOLDOWN_MS,
     HARSH_ACCEL_THRESH,
     HARSH_BRAKE_THRESH,
+    JERK_ROUGH_THRESH,
     SHARP_TURN_THRESH,
     SPEEDING_MARGIN_KMH,
+    SPEED_OVER_LIMIT_KMH,
     RideEvent,
     make_event,
 )
@@ -144,6 +146,16 @@ def on_sample(
         trip.events.append(ev)
         new_events.append(ev)
 
+    if (
+        prev
+        and abs(jerk) > JERK_ROUGH_THRESH
+        and 0.8 <= ax < HARSH_ACCEL_THRESH
+        and _can_fire(trip, "uneven_accel", sid, t_ms)
+    ):
+        ev = make_event("uneven_accel", t_ms, lat, lng, sid, abs(jerk), seg.curvature, lateral)
+        trip.events.append(ev)
+        new_events.append(ev)
+
     if abs(ay) > SHARP_TURN_THRESH and _can_fire(trip, "sharp_turn", sid, t_ms):
         ev = make_event("sharp_turn", t_ms, lat, lng, sid, abs(ay), seg.curvature, lateral)
         trip.events.append(ev)
@@ -162,6 +174,11 @@ def on_sample(
     ):
         mag = (speed_kmh - b.speed_limit_kmh) / max(b.speed_limit_kmh, 1.0)
         ev = make_event("speeding_risky", t_ms, lat, lng, sid, mag, seg.curvature, lateral)
+        trip.events.append(ev)
+        new_events.append(ev)
+    elif speed_kmh > b.speed_limit_kmh + SPEED_OVER_LIMIT_KMH and _can_fire(trip, "speeding", sid, t_ms):
+        mag = speed_kmh - b.speed_limit_kmh
+        ev = make_event("speeding", t_ms, lat, lng, sid, mag, seg.curvature, lateral)
         trip.events.append(ev)
         new_events.append(ev)
 
@@ -210,9 +227,11 @@ def segment_color_payload(trip: Trip) -> List[dict]:
 _EVENT_IMPACT: Dict[str, float] = {
     "harsh_brake": 7.0,
     "harsh_accel": 6.0,
+    "uneven_accel": 4.5,
     "sharp_turn": 6.0,
     "bump": 5.0,
     "speeding_risky": 8.0,
+    "speeding": 5.5,
 }
 
 
@@ -233,54 +252,30 @@ def final_score(trip: Trip) -> dict:
     score = min(seg_score, ev_score)
     score = max(0.0, min(100.0, math.floor(score * 10) / 10))
 
-    # Attribution breakdown
-    attr_counts: Dict[str, int] = {"driver": 0, "road": 0, "traffic": 0, "route": 0}
+    event_counts: Dict[str, int] = {}
     for ev in trip.events:
-        attr_counts[ev.attributed_to] = attr_counts.get(ev.attributed_to, 0) + 1
+        event_counts[ev.type] = event_counts.get(ev.type, 0) + 1
 
-    total = max(1, len(trip.events))
-    attribution = {k: round(v / total * 100) for k, v in attr_counts.items()}
-
-    # Rider summary
     lines: List[str] = []
     if not trip.events:
-        lines.append("Your driver delivered a smooth, comfortable ride.")
+        lines.append("No notable motion events along this route.")
     else:
         if red:
-            lines.append(f"{red} road segment(s) had rough moments.")
+            lines.append(f"{red} segment(s) registered elevated roughness.")
         elif yel:
-            lines.append(f"{yel} segment(s) had minor discomfort.")
-        driver_ev = attr_counts.get("driver", 0)
-        road_ev = attr_counts.get("road", 0)
-        traffic_ev = attr_counts.get("traffic", 0)
-        if driver_ev > max(road_ev, traffic_ev):
-            lines.append("Most discomfort came from driving style.")
-        elif road_ev > 0:
-            lines.append("Road surface conditions contributed to discomfort.")
-        elif traffic_ev > 0:
-            lines.append("Traffic stops caused some sudden braking.")
-
-    # Driver coaching hints
-    coaching: List[str] = []
-    brake_driver = [e for e in trip.events if e.type == "harsh_brake" and e.attributed_to == "driver"]
-    turn_driver = [e for e in trip.events if e.type == "sharp_turn" and e.attributed_to == "driver"]
-    accel_driver = [e for e in trip.events if e.type == "harsh_accel"]
-    speed_driver = [e for e in trip.events if e.type == "speeding_risky"]
-    if len(brake_driver) >= 2:
-        coaching.append("Anticipate stops earlier to reduce harsh braking.")
-    if len(turn_driver) >= 1:
-        coaching.append("Ease into turns more gradually for passenger comfort.")
-    if len(accel_driver) >= 1:
-        coaching.append("Smooth acceleration improves the ride experience.")
-    if len(speed_driver) >= 1:
-        coaching.append("Reduce speed before sharp bends.")
+            lines.append(f"{yel} segment(s) had mild roughness.")
+        sp = sum(1 for e in trip.events if e.type in ("speeding", "speeding_risky"))
+        ua = sum(1 for e in trip.events if e.type in ("harsh_accel", "uneven_accel"))
+        if sp:
+            lines.append(f"Speed vs limit: {sp} moment(s) detected.")
+        if ua:
+            lines.append(f"Acceleration: {ua} notable spike(s).")
 
     return {
         "score": score,
         "summary": " ".join(lines) if lines else "Comfortable trip overall.",
         "events": [e.to_dict() for e in trip.events],
-        "attribution": attribution,
-        "coaching": coaching,
+        "event_counts": event_counts,
         "per_segment": segment_color_payload(trip),
         "stats": {
             "total_events": len(trip.events),

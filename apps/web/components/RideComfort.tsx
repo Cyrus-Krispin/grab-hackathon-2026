@@ -15,6 +15,8 @@ type LiveState = {
   current_segment: number;
   segment_count: number;
   position: CurrentPosition;
+  /** Route-curvature proxy for posted limit on current segment (km/h). */
+  speed_limit_kmh: number | null;
   metrics: {
     lateral_mps2: number;
     brake_mps2: number;
@@ -26,8 +28,7 @@ type LiveState = {
 type FinalResult = {
   score: number;
   summary: string;
-  attribution: Record<string, number>;
-  coaching: string[];
+  event_counts: Record<string, number>;
   events: RideEvent[];
   stats: { total_events: number; red_segments: number; yellow_segments: number; green_segments: number };
 };
@@ -53,11 +54,39 @@ const STREAM_TONE: Record<Comfort, { line: string; chip: string }> = {
 
 const emptyFc: SegmentGeo = { type: "FeatureCollection", features: [] };
 
-const ATTR_COLORS: Record<string, string> = {
-  driver:  "#60a5fa",
+const CONTEXT_COLORS: Record<string, string> = {
+  vehicle: "#60a5fa",
   road:    "#f97316",
   traffic: "#a78bfa",
   route:   "#34d399",
+};
+
+const CONTEXT_LABELS: Record<string, string> = {
+  vehicle: "Motion",
+  traffic: "Traffic",
+  road:    "Road",
+  route:   "Route",
+};
+
+/** Display order for post-trip event breakdown */
+const EVENT_BREAKDOWN_ORDER: string[] = [
+  "speeding",
+  "speeding_risky",
+  "uneven_accel",
+  "harsh_accel",
+  "harsh_brake",
+  "sharp_turn",
+  "bump",
+];
+
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  speeding: "Over speed limit",
+  speeding_risky: "High speed while turning",
+  uneven_accel: "Uneven acceleration",
+  harsh_accel: "Hard acceleration",
+  harsh_brake: "Sudden braking",
+  sharp_turn: "Sharp lateral movement",
+  bump: "Road bump",
 };
 
 // ─── Simulator (per-trip random incidents) ────────────────────────────────────
@@ -365,11 +394,16 @@ export function RideComfort() {
         try {
           const msg = JSON.parse(ev.data as string);
           if (msg.type === "state") {
+            const lim =
+              msg.baselines && typeof msg.baselines.speed_limit_kmh === "number"
+                ? msg.baselines.speed_limit_kmh
+                : null;
             setLive({
               comfort: msg.comfort,
               current_segment: msg.current_segment,
               segment_count: msg.segment_count,
               position: msg.position,
+              speed_limit_kmh: lim,
               metrics: msg.metrics,
             });
             if (msg.segment_geojson) setGeojson(msg.segment_geojson);
@@ -551,7 +585,7 @@ export function RideComfort() {
             <div className="flex flex-col gap-5">
               <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-5 text-sm leading-relaxed text-zinc-600">
                 <p className="mb-2 text-zinc-800 font-medium">How it works</p>
-                <p>Search any start and end in Singapore, then run a comfort simulation along the driving route. Events are attributed to <span className="text-blue-600">driver</span>, <span className="text-orange-600">road</span>, <span className="text-purple-600">traffic</span>, or <span className="text-emerald-600">route</span>.</p>
+                <p>Search any start and end in Singapore, then run a simulation along the driving route. We highlight <span className="text-zinc-800 font-medium">speed vs the posted limit</span>, <span className="text-zinc-800 font-medium">uneven or hard acceleration</span>, braking, lateral motion, and bumps — as motion signals on each segment, not as feedback to anyone.</p>
               </div>
 
               <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-700">
@@ -598,7 +632,15 @@ export function RideComfort() {
                 <Metric label="Lateral G" value={`${(live?.metrics.lateral_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
                 <Metric label="Braking G" value={`${(live?.metrics.brake_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
                 <Metric label="Jerk" value={`${(live?.metrics.jerk_mps3 ?? 0).toFixed(1)}`} unit="m/s³" />
-                <Metric label="Speed" value={`${(live?.metrics.speed_kmh ?? 0).toFixed(0)}`} unit="km/h" />
+                <Metric
+                  label="Speed (segment cap)"
+                  value={
+                    live?.speed_limit_kmh != null
+                      ? `${(live?.metrics.speed_kmh ?? 0).toFixed(0)} / ${live.speed_limit_kmh.toFixed(0)}`
+                      : `${(live?.metrics.speed_kmh ?? 0).toFixed(0)}`
+                  }
+                  unit="km/h"
+                />
               </div>
 
               {events.length > 0 && (
@@ -612,11 +654,11 @@ export function RideComfort() {
                         <span
                           className="rounded px-1.5 py-0.5 text-[10px] font-medium"
                           style={{
-                            background: ATTR_COLORS[ev.attributed_to] + "22",
-                            color: ATTR_COLORS[ev.attributed_to],
+                            background: (CONTEXT_COLORS[ev.attributed_to] ?? "#71717a") + "22",
+                            color: CONTEXT_COLORS[ev.attributed_to] ?? "#71717a",
                           }}
                         >
-                          {ev.attributed_to}
+                          {CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to}
                         </span>
                       </li>
                     ))}
@@ -670,40 +712,34 @@ export function RideComfort() {
                 </div>
               </div>
 
-              {/* Attribution */}
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
-                <p className="mb-3 text-xs font-medium text-zinc-600">Discomfort Attribution</p>
-                <div className="flex flex-col gap-2.5">
-                  {Object.entries(result.attribution)
-                    .filter(([, v]) => v > 0)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([key, pct]) => (
-                      <div key={key} className="flex items-center gap-2">
-                        <span className="text-xs w-14 text-zinc-600 capitalize">{key}</span>
-                        <div className="flex-1 h-2 rounded-full bg-zinc-200 overflow-hidden">
-                          <div
-                            className="h-full rounded-full transition-all"
-                            style={{ width: `${pct}%`, background: ATTR_COLORS[key] ?? "#71717a" }}
-                          />
-                        </div>
-                        <span className="text-xs text-zinc-600 w-8 text-right">{pct}%</span>
-                      </div>
-                    ))}
-                </div>
-              </div>
-
-              {/* Driver coaching */}
-              {result.coaching.length > 0 && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50/95 p-4">
-                  <p className="mb-3 text-xs font-medium text-blue-700">Driver Coaching</p>
-                  <ul className="flex flex-col gap-2">
-                    {result.coaching.map((hint, i) => (
-                      <li key={i} className="text-xs text-zinc-700 flex gap-1.5">
-                        <span className="text-blue-700 mt-0.5">›</span>
-                        {hint}
-                      </li>
-                    ))}
-                  </ul>
+              {/* Event breakdown (by type) */}
+              {result.stats.total_events > 0 && (
+                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                  <p className="mb-3 text-xs font-medium text-zinc-600">What we detected</p>
+                  <div className="flex flex-col gap-2.5">
+                    {[
+                      ...EVENT_BREAKDOWN_ORDER.filter((k) => (result.event_counts[k] ?? 0) > 0),
+                      ...Object.keys(result.event_counts).filter((k) => !EVENT_BREAKDOWN_ORDER.includes(k)),
+                    ].map((key) => {
+                        const n = result.event_counts[key] ?? 0;
+                        const maxN = Math.max(...Object.values(result.event_counts), 1);
+                        const pct = Math.round((n / maxN) * 100);
+                        return (
+                          <div key={key} className="flex items-center gap-2">
+                            <span className="text-xs w-[8.5rem] shrink-0 text-zinc-600 leading-tight">
+                              {EVENT_TYPE_LABELS[key] ?? key.replace(/_/g, " ")}
+                            </span>
+                            <div className="flex-1 h-2 rounded-full bg-zinc-200 overflow-hidden">
+                              <div
+                                className="h-full rounded-full transition-all bg-zinc-500"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-zinc-600 w-6 text-right tabular-nums">{n}</span>
+                          </div>
+                        );
+                      })}
+                  </div>
                 </div>
               )}
 
@@ -721,11 +757,11 @@ export function RideComfort() {
                         <span
                           className="rounded px-1.5 py-0.5 text-[10px] font-medium"
                           style={{
-                            background: ATTR_COLORS[ev.attributed_to] + "22",
-                            color: ATTR_COLORS[ev.attributed_to],
+                            background: (CONTEXT_COLORS[ev.attributed_to] ?? "#71717a") + "22",
+                            color: CONTEXT_COLORS[ev.attributed_to] ?? "#71717a",
                           }}
                         >
-                          {ev.attributed_to}
+                          {CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to}
                         </span>
                       </li>
                     ))}

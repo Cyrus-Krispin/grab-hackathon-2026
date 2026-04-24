@@ -35,6 +35,13 @@ export type CurrentPosition = {
 
 export type PlanPin = { lat: number; lng: number; role: "start" | "end" };
 
+const CONTEXT_LABELS: Record<string, string> = {
+  vehicle: "Vehicle motion",
+  traffic: "Traffic flow",
+  road: "Road surface",
+  route: "Route shape",
+};
+
 const SOURCE = "route-comfort";
 const PLAN_START_ID = "_plan-start";
 const PLAN_END_ID = "_plan-end";
@@ -283,14 +290,15 @@ export function ComfortMap({ geojson, events, currentPosition, pickPins }: Props
       const el = document.createElement("div");
       el.className = "event-marker";
       el.textContent = ev.icon;
-      el.title = `${ev.label} — ${ev.attributed_to}`;
+      const ctx = CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to;
+      el.title = `${ev.label} — ${ctx}`;
       const marker = new maplibregl.Marker({ element: el, anchor: "center" })
         .setLngLat([ev.lng, ev.lat])
         .setPopup(
           new maplibregl.Popup({ offset: 14, closeButton: false }).setHTML(
             `<div style="background:#18181b;color:#fafafa;padding:6px 10px;border-radius:6px;font-size:12px;line-height:1.5">
               <strong>${ev.icon} ${ev.label}</strong><br/>
-              Attributed to: <em>${ev.attributed_to}</em><br/>
+              Context: <em>${ctx}</em><br/>
               Magnitude: ${ev.magnitude.toFixed(2)}
             </div>`
           )
