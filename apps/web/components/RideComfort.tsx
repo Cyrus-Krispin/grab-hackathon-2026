@@ -31,6 +31,7 @@ type FinalResult = {
   event_counts: Record<string, number>;
   events: RideEvent[];
   stats: { total_events: number; red_segments: number; yellow_segments: number; green_segments: number };
+  per_segment?: { id: string; level: Comfort }[];
 };
 
 type StreamRow = {
@@ -88,6 +89,12 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   sharp_turn: "Sharp lateral movement",
   bump: "Road bump",
 };
+
+function comfortTier(score: number): { label: string; chip: string } {
+  if (score >= 80) return { label: "Excellent", chip: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200/80" };
+  if (score >= 60) return { label: "Good", chip: "bg-amber-100 text-amber-800 ring-1 ring-amber-200/80" };
+  return { label: "Needs attention", chip: "bg-red-100 text-red-800 ring-1 ring-red-200/80" };
+}
 
 // ─── Simulator (per-trip random incidents) ────────────────────────────────────
 
@@ -296,7 +303,6 @@ export function RideComfort() {
   const [endPlace, setEndPlace] = useState<PickedPlace | null>(null);
   const [useDemoRoute, setUseDemoRoute] = useState(false);
   const [routingNote, setRoutingNote] = useState<string | null>(null);
-  const [sideTab, setSideTab] = useState<"monitor" | "analytics">("monitor");
   const [sideSheetOpen, setSideSheetOpen] = useState(false);
   const [streamRows, setStreamRows] = useState<StreamRow[]>([]);
 
@@ -529,10 +535,12 @@ export function RideComfort() {
     [streamRows],
   );
 
+  const tripTier = useMemo(() => (result ? comfortTier(result.score) : null), [result]);
+
   useEffect(() => {
-    if (sideTab !== "analytics" || !nonGreenStreamRows.length) return;
+    if (phase !== "running" || !nonGreenStreamRows.length) return;
     streamEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [nonGreenStreamRows.length, sideTab]);
+  }, [nonGreenStreamRows.length, phase]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950">
@@ -574,7 +582,7 @@ export function RideComfort() {
                 type="button"
                 className="touch-manipulation rounded-md p-2.5 text-zinc-600 hover:bg-zinc-100 md:hidden"
                 aria-expanded={sideSheetOpen}
-                aria-label="Monitoring and analytics"
+                aria-label="Analytics panel"
                 onClick={() => setSideSheetOpen((o) => !o)}
               >
                 <span className="flex h-5 w-5 flex-col justify-center gap-1" aria-hidden>
@@ -632,248 +640,255 @@ export function RideComfort() {
           <div
             className={`flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden ${!sideSheetOpen && phase === "idle" ? "max-md:hidden" : ""}`}
           >
-          <div className="grid shrink-0 grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-xs font-medium">
-            <button
-              type="button"
-              onClick={() => setSideTab("monitor")}
-              className={
-                sideTab === "monitor"
-                  ? "rounded-md bg-white px-3 py-2 text-zinc-900 shadow-sm"
-                  : "rounded-md px-3 py-2 text-zinc-600 transition-colors hover:bg-white/70 hover:text-zinc-900"
-              }
-            >
-              Monitor
-            </button>
-            <button
-              type="button"
-              onClick={() => setSideTab("analytics")}
-              className={
-                sideTab === "analytics"
-                  ? "rounded-md bg-white px-3 py-2 text-zinc-900 shadow-sm"
-                  : "rounded-md px-3 py-2 text-zinc-600 transition-colors hover:bg-white/70 hover:text-zinc-900"
-              }
-            >
-              Analytics
-            </button>
-          </div>
-
-          {sideTab === "monitor" && (
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-            <>
-          {/* ── Idle: info (search + book is above) ───────────────────── */}
-          {phase === "idle" && (
-            <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-sm leading-relaxed text-zinc-600 sm:p-5">
-              <p className="mb-2 text-zinc-800 font-medium">How it works</p>
-              <p>Search any start and end in Singapore, then run a simulation along the driving route. We highlight <span className="text-zinc-800 font-medium">speed vs the posted limit</span>, <span className="text-zinc-800 font-medium">uneven or hard acceleration</span>, braking, lateral motion, and bumps — as motion signals on each segment, not as feedback to anyone.</p>
-            </div>
-          )}
-
-          {/* ── Running: live metrics ─────────────────────────────────── */}
-          {phase === "running" && (
-            <>
-              <div className="grid grid-cols-2 gap-3">
-                <Metric label="Lateral G" value={`${(live?.metrics.lateral_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
-                <Metric label="Braking G" value={`${(live?.metrics.brake_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
-                <Metric label="Jerk" value={`${(live?.metrics.jerk_mps3 ?? 0).toFixed(1)}`} unit="m/s³" />
-                <Metric
-                  label="Speed (segment cap)"
-                  value={
-                    live?.speed_limit_kmh != null
-                      ? `${(live?.metrics.speed_kmh ?? 0).toFixed(0)} / ${live.speed_limit_kmh.toFixed(0)}`
-                      : `${(live?.metrics.speed_kmh ?? 0).toFixed(0)}`
-                  }
-                  unit="km/h"
-                />
-              </div>
-
-              {events.length > 0 && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
-                  <p className="mb-3 text-xs font-medium text-zinc-600">Detected Events</p>
-                  <ul className="flex flex-col gap-2">
-                    {events.slice(-5).reverse().map((ev) => (
-                      <li key={ev.id} className="flex items-center gap-2 text-xs">
-                        <span>{ev.icon}</span>
-                        <span className="text-zinc-700 flex-1">{ev.label}</span>
-                        <span
-                          className="rounded px-1.5 py-0.5 text-[10px] font-medium"
-                          style={{
-                            background: (CONTEXT_COLORS[ev.attributed_to] ?? "#71717a") + "22",
-                            color: CONTEXT_COLORS[ev.attributed_to] ?? "#71717a",
-                          }}
-                        >
-                          {CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* ── Done: score card ──────────────────────────────────────── */}
-          {phase === "done" && result && (
-            <div className="flex flex-col gap-4">
-              {/* Score */}
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-5 text-center">
-                <p className="mb-2 text-xs uppercase tracking-wider text-zinc-500">Comfort Score</p>
-                <p
-                  className="text-5xl font-bold leading-none"
-                  style={{
-                    color:
-                      result.score >= 80 ? "#00b14f"
-                      : result.score >= 60 ? "#f59e0b"
-                      : "#ef4444",
-                  }}
-                >
-                  {result.score.toFixed(1)}
-                </p>
-                <p className="mt-2 text-xs text-zinc-500">out of 100</p>
-                <p className="mt-4 text-sm leading-snug text-zinc-700">{result.summary}</p>
-              </div>
-
-              {/* Stats strip */}
-              <div className="grid grid-cols-3 gap-3 text-center text-xs">
-                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-3">
-                  <p className="text-zinc-800 font-bold text-lg" style={{ color: "#00b14f" }}>{result.stats.green_segments}</p>
-                  <p className="text-zinc-500">Smooth</p>
-                </div>
-                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-3">
-                  <p className="text-zinc-800 font-bold text-lg" style={{ color: "#f59e0b" }}>{result.stats.yellow_segments}</p>
-                  <p className="text-zinc-500">Bumpy</p>
-                </div>
-                <div className="rounded-lg bg-zinc-50/95 border border-zinc-200 p-3">
-                  <p className="text-zinc-800 font-bold text-lg" style={{ color: "#ef4444" }}>{result.stats.red_segments}</p>
-                  <p className="text-zinc-500">Rough</p>
-                </div>
-              </div>
-
-              {/* Event breakdown (by type) */}
-              {result.stats.total_events > 0 && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
-                  <p className="mb-3 text-xs font-medium text-zinc-600">What we detected</p>
-                  <div className="flex flex-col gap-2.5">
-                    {[
-                      ...EVENT_BREAKDOWN_ORDER.filter((k) => (result.event_counts[k] ?? 0) > 0),
-                      ...Object.keys(result.event_counts).filter((k) => !EVENT_BREAKDOWN_ORDER.includes(k)),
-                    ].map((key) => {
-                        const n = result.event_counts[key] ?? 0;
-                        const maxN = Math.max(...Object.values(result.event_counts), 1);
-                        const pct = Math.round((n / maxN) * 100);
-                        return (
-                          <div key={key} className="flex items-center gap-2">
-                            <span className="text-xs w-[8.5rem] shrink-0 text-zinc-600 leading-tight">
-                              {EVENT_TYPE_LABELS[key] ?? key.replace(/_/g, " ")}
-                            </span>
-                            <div className="flex-1 h-2 rounded-full bg-zinc-200 overflow-hidden">
-                              <div
-                                className="h-full rounded-full transition-all bg-zinc-500"
-                                style={{ width: `${pct}%` }}
-                              />
-                            </div>
-                            <span className="text-xs text-zinc-600 w-6 text-right tabular-nums">{n}</span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </div>
-              )}
-
-              {/* All events */}
-              {result.events.length > 0 && (
-                <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
-                  <p className="mb-3 text-xs font-medium text-zinc-600">
-                    All Events ({result.events.length})
-                  </p>
-                  <ul className="flex max-h-40 flex-col gap-2 overflow-y-auto">
-                    {result.events.map((ev) => (
-                      <li key={ev.id} className="flex items-center gap-2 text-xs">
-                        <span>{ev.icon}</span>
-                        <span className="text-zinc-700 flex-1">{ev.label}</span>
-                        <span
-                          className="rounded px-1.5 py-0.5 text-[10px] font-medium"
-                          style={{
-                            background: (CONTEXT_COLORS[ev.attributed_to] ?? "#71717a") + "22",
-                            color: CONTEXT_COLORS[ev.attributed_to] ?? "#71717a",
-                          }}
-                        >
-                          {CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={resetToIdle}
-                className="mt-1 w-full rounded-lg border border-zinc-300 bg-white py-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
-              >
-                New Trip
-              </button>
-            </div>
-          )}
-
-            </>
-            </div>
-          )}
-
-          {sideTab === "analytics" && (
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
               <div className="shrink-0">
-                <p className="text-sm font-medium text-zinc-800">Noteworthy samples</p>
-                <p className="mt-0.5 text-xs text-zinc-500">
-                  {phase === "idle" &&
-                    "Yellow and red instants from the live stream — everything except normal (green), e.g. harder motion or speed-limit stress."}
-                  {phase === "running" &&
-                    `${nonGreenStreamRows.length} non-green · ${streamRows.length} total samples`}
-                  {phase === "done" &&
-                    `${nonGreenStreamRows.length} non-green · ${streamRows.length} total samples in the last trip`}
-                </p>
+                <h2 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">Analytics</h2>
               </div>
 
-              {streamRows.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
-                  {phase === "idle"
-                    ? "No trip yet. Book a trip on Monitor, then open this tab during the run to see non-green samples."
-                    : "Waiting for the first position update…"}
-                </div>
-              ) : nonGreenStreamRows.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
-                  No yellow or red samples in this trip yet — comfort stayed in the green band at every logged instant.
-                </div>
-              ) : (
-                <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/30">
-                  <ul className="flex flex-col gap-1.5 p-2">
-                    {nonGreenStreamRows.map((r, i) => (
-                      <li
-                        key={`${r.t_ms}-${r.comfort}-${i}`}
-                        className={`rounded-r-md border border-zinc-200/80 py-1.5 pl-2.5 pr-2 text-left ${STREAM_TONE[r.comfort].line}`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-mono text-[10px] text-zinc-500">
-                            t={r.t_ms.toFixed(0)}ms · #{i + 1}
-                          </span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${STREAM_TONE[r.comfort].chip}`}>
-                            {r.comfort}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 font-mono text-[11px] text-zinc-800">
-                          {r.lat.toFixed(5)}°, {r.lng.toFixed(5)}°
-                        </p>
-                        <p className="text-[10px] text-zinc-600">
-                          lateral {r.lateral_mps2.toFixed(2)} · brake {r.brake_mps2.toFixed(2)} · jerk {r.jerk_mps3.toFixed(1)} · {r.speed_kmh.toFixed(0)} km/h
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                  <div ref={streamEndRef} className="h-0 w-full shrink-0" aria-hidden />
+              {phase === "idle" && (
+                <div className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-sm leading-relaxed text-zinc-600 sm:p-5">
+                  <p className="mb-2 font-medium text-zinc-800">How it works</p>
+                  <p>
+                    Search any start and end in Singapore, then run a simulation along the driving route. We highlight{" "}
+                    <span className="font-medium text-zinc-800">speed vs the posted limit</span>,{" "}
+                    <span className="font-medium text-zinc-800">uneven or hard acceleration</span>, braking, lateral motion, and bumps — as motion signals on each segment, not as feedback to anyone.
+                  </p>
                 </div>
               )}
-            </div>
-          )}
 
+              {phase === "running" && (
+                <>
+                  <div className="shrink-0 grid grid-cols-2 gap-3">
+                    <Metric label="Lateral G" value={`${(live?.metrics.lateral_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
+                    <Metric label="Braking G" value={`${(live?.metrics.brake_mps2 ?? 0).toFixed(2)}`} unit="m/s²" />
+                    <Metric label="Jerk" value={`${(live?.metrics.jerk_mps3 ?? 0).toFixed(1)}`} unit="m/s³" />
+                    <Metric
+                      label="Speed (segment cap)"
+                      value={
+                        live?.speed_limit_kmh != null
+                          ? `${(live?.metrics.speed_kmh ?? 0).toFixed(0)} / ${live.speed_limit_kmh.toFixed(0)}`
+                          : `${(live?.metrics.speed_kmh ?? 0).toFixed(0)}`
+                      }
+                      unit="km/h"
+                    />
+                  </div>
+
+                  {events.length > 0 && (
+                    <div className="shrink-0 rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                      <p className="mb-3 text-xs font-medium text-zinc-600">Detected events</p>
+                      <ul className="flex flex-col gap-2">
+                        {events.slice(-5).reverse().map((ev) => (
+                          <li key={ev.id} className="flex items-center gap-2 text-xs">
+                            <span>{ev.icon}</span>
+                            <span className="flex-1 text-zinc-700">{ev.label}</span>
+                            <span
+                              className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                              style={{
+                                background: (CONTEXT_COLORS[ev.attributed_to] ?? "#71717a") + "22",
+                                color: CONTEXT_COLORS[ev.attributed_to] ?? "#71717a",
+                              }}
+                            >
+                              {CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {phase === "done" && result && (
+                <div className="flex shrink-0 flex-col gap-4">
+                  <div className="overflow-hidden rounded-xl border border-zinc-200 bg-gradient-to-b from-white to-zinc-50/95 p-5 shadow-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 text-left">
+                        <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">Trip complete</p>
+                        <p className="mt-1 text-xs text-zinc-600">Comfort score</p>
+                        <p
+                          className="mt-0.5 text-5xl font-bold leading-none tabular-nums"
+                          style={{
+                            color:
+                              result.score >= 80 ? "#00b14f"
+                              : result.score >= 60 ? "#f59e0b"
+                              : "#ef4444",
+                          }}
+                        >
+                          {result.score.toFixed(1)}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">out of 100</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${tripTier?.chip ?? ""}`}>
+                        {tripTier?.label}
+                      </span>
+                    </div>
+                    <p className="mt-4 border-t border-zinc-100 pt-4 text-sm leading-snug text-zinc-700">{result.summary}</p>
+                  </div>
+
+                  {result.per_segment && result.per_segment.length > 0 && (
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                      <p className="mb-2 text-xs font-medium text-zinc-600">Comfort along route</p>
+                      <div
+                        className="flex h-2.5 w-full overflow-hidden rounded-md border border-zinc-200/80 bg-zinc-100"
+                        title="Each block is one segment; color is comfort level for that part of the path."
+                      >
+                        {result.per_segment.map((s) => (
+                          <div
+                            key={s.id}
+                            className="min-w-px flex-1"
+                            style={{
+                              background:
+                                s.level === "green" ? "#22c55e"
+                                : s.level === "yellow" ? "#f59e0b"
+                                : "#ef4444",
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <p className="mt-1.5 text-[10px] text-zinc-500">
+                        {result.per_segment.length} segments · green smooth · amber mild · red elevated roughness
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
+                      <p className="text-lg font-bold tabular-nums" style={{ color: "#00b14f" }}>
+                        {result.stats.green_segments}
+                      </p>
+                      <p className="text-zinc-500">Smooth</p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
+                      <p className="text-lg font-bold tabular-nums" style={{ color: "#f59e0b" }}>
+                        {result.stats.yellow_segments}
+                      </p>
+                      <p className="text-zinc-500">Bumpy</p>
+                    </div>
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-3">
+                      <p className="text-lg font-bold tabular-nums" style={{ color: "#ef4444" }}>
+                        {result.stats.red_segments}
+                      </p>
+                      <p className="text-zinc-500">Rough</p>
+                    </div>
+                  </div>
+
+                  {result.stats.total_events > 0 && (
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                      <p className="mb-3 text-xs font-medium text-zinc-600">What we detected</p>
+                      <div className="flex flex-col gap-2.5">
+                        {[
+                          ...EVENT_BREAKDOWN_ORDER.filter((k) => (result.event_counts[k] ?? 0) > 0),
+                          ...Object.keys(result.event_counts).filter((k) => !EVENT_BREAKDOWN_ORDER.includes(k)),
+                        ].map((key) => {
+                          const n = result.event_counts[key] ?? 0;
+                          const maxN = Math.max(...Object.values(result.event_counts), 1);
+                          const pct = Math.round((n / maxN) * 100);
+                          return (
+                            <div key={key} className="flex items-center gap-2">
+                              <span className="w-[8.5rem] shrink-0 text-xs leading-tight text-zinc-600">
+                                {EVENT_TYPE_LABELS[key] ?? key.replace(/_/g, " ")}
+                              </span>
+                              <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-200">
+                                <div
+                                  className="h-full rounded-full bg-zinc-600 transition-all"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                              <span className="w-6 text-right text-xs tabular-nums text-zinc-600">{n}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {result.events.length > 0 && (
+                    <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4">
+                      <p className="mb-3 text-xs font-medium text-zinc-600">All events ({result.events.length})</p>
+                      <ul className="flex max-h-44 flex-col gap-2 overflow-y-auto">
+                        {result.events.map((ev) => (
+                          <li key={ev.id} className="flex items-center gap-2 text-xs">
+                            <span>{ev.icon}</span>
+                            <span className="flex-1 text-zinc-700">{ev.label}</span>
+                            <span
+                              className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                              style={{
+                                background: (CONTEXT_COLORS[ev.attributed_to] ?? "#71717a") + "22",
+                                color: CONTEXT_COLORS[ev.attributed_to] ?? "#71717a",
+                              }}
+                            >
+                              {CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex shrink-0 flex-col gap-2">
+                <div className="shrink-0">
+                  <p className="text-sm font-medium text-zinc-800">Noteworthy samples</p>
+                  <p className="mt-0.5 text-xs text-zinc-500">
+                    {phase === "idle" &&
+                      "Yellow and red instants from the stream — harder motion or speed-limit stress vs smooth (green)."}
+                    {phase === "running" && `${nonGreenStreamRows.length} non-green · ${streamRows.length} total samples`}
+                    {phase === "done" && `${nonGreenStreamRows.length} non-green · ${streamRows.length} samples logged this trip`}
+                  </p>
+                </div>
+
+                {streamRows.length === 0 ? (
+                  <div className="shrink-0 rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
+                    {phase === "idle"
+                      ? "No trip yet. Book and start a trip to see non-green samples as the simulation runs."
+                      : "Waiting for the first position update…"}
+                  </div>
+                ) : nonGreenStreamRows.length === 0 ? (
+                  <div className="shrink-0 rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
+                    No yellow or red samples in this trip yet — comfort stayed in the green band at every logged instant.
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50/30">
+                    <ul className="flex max-h-52 flex-col gap-1.5 overflow-y-auto p-2 md:max-h-64">
+                      {nonGreenStreamRows.map((r, i) => (
+                        <li
+                          key={`${r.t_ms}-${r.comfort}-${i}`}
+                          className={`rounded-r-md border border-zinc-200/80 py-1.5 pl-2.5 pr-2 text-left ${STREAM_TONE[r.comfort].line}`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono text-[10px] text-zinc-500">
+                              t={r.t_ms.toFixed(0)}ms · #{i + 1}
+                            </span>
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${STREAM_TONE[r.comfort].chip}`}>
+                              {r.comfort}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 font-mono text-[11px] text-zinc-800">
+                            {r.lat.toFixed(5)}°, {r.lng.toFixed(5)}°
+                          </p>
+                          <p className="text-[10px] text-zinc-600">
+                            lateral {r.lateral_mps2.toFixed(2)} · brake {r.brake_mps2.toFixed(2)} · jerk {r.jerk_mps3.toFixed(1)} ·{" "}
+                            {r.speed_kmh.toFixed(0)} km/h
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                    <div ref={streamEndRef} className="h-0 w-full shrink-0" aria-hidden />
+                  </div>
+                )}
+              </div>
+
+              {phase === "done" && result && (
+                <button
+                  type="button"
+                  onClick={resetToIdle}
+                  className="shrink-0 w-full rounded-lg border border-zinc-300 bg-white py-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
+                >
+                  New trip
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
