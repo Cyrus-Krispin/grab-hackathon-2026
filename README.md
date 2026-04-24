@@ -48,4 +48,5 @@ The backend uses a fixed O/D; trip start fetches `maps/eta/v1/direction` (drivin
 
 ## Plan reference
 
-The implementation follows the “Ride comfort + Grab Maps” monorego plan: WebSocket “in range” updates, per-segment green/yellow/red, end-of-trip score.
+The implementation follows the “Ride comfort + Grab Maps” monorego plan: WebSocket “in range” updates, per-segment green/yellow/red, end-of-trip score
+
