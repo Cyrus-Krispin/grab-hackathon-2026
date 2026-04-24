@@ -1,0 +1,36 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies and builds
+node_modules/
+.next/
+dist/
+build/
+.venv/
+venv/
+.pip_packages/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+eggs/
+.pytype/
+
+# OS and editors
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Logs
+*.log
+npm-debug.log*
+
+# Python
+.mypy_cache/
+.ruff_cache/
