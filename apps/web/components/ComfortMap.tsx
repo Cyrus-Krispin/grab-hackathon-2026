@@ -47,8 +47,23 @@ const PLAN_START_ID = "_plan-start";
 const PLAN_END_ID = "_plan-end";
 const ROUTE_START_ID = "_route-start";
 const ROUTE_END_ID = "_route-end";
+/** Keys in `markersRef` that are not ride-event markers — never remove these when syncing `events`. */
+const RESERVED_MARKER_KEYS = new Set([
+  PLAN_START_ID,
+  PLAN_END_ID,
+  ROUTE_START_ID,
+  ROUTE_END_ID,
+]);
 const LAYER  = "route-comfort-line";
 const CARTO  = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+
+const SPEED_EVENT_TYPES = new Set(["speeding", "speeding_risky"]);
+
+/** Inline SVG so map pins don’t rely on emoji fonts (🏎️ often renders poorly in markers). */
+function speedEventMarkerSvg(type: "speeding" | "speeding_risky"): string {
+  const fill = type === "speeding_risky" ? "#d97706" : "#dc2626";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true"><circle cx="14" cy="14" r="12" fill="${fill}" stroke="#ffffff" stroke-width="2"/><path fill="none" stroke="#ffffff" stroke-width="1.75" stroke-linecap="round" d="M 7 14 A 7 7 0 0 0 21 14"/><line x1="14" y1="14" x2="19" y2="9" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round"/></svg>`;
+}
 
 // Data-driven color from segment `comfort` property
 const COLOR_EXPR: maplibregl.DataDrivenPropertyValueSpecification<string> = [
@@ -283,21 +298,36 @@ export function ComfortMap({ geojson, events, currentPosition, pickPins }: Props
     if (!ready || !mapRef.current) return;
     const map = mapRef.current;
     const existing = markersRef.current;
+    const wantIds = new Set(events.map((e) => e.id));
+    for (const key of Object.keys(existing)) {
+      if (RESERVED_MARKER_KEYS.has(key)) continue;
+      if (!wantIds.has(key)) {
+        existing[key]?.remove();
+        delete existing[key];
+      }
+    }
 
     // Add new markers
     for (const ev of events) {
       if (existing[ev.id]) continue;
       const el = document.createElement("div");
       el.className = "event-marker";
-      el.textContent = ev.icon;
+      if (SPEED_EVENT_TYPES.has(ev.type)) {
+        el.classList.add(ev.type === "speeding_risky" ? "event-marker--speed-risky" : "event-marker--speed");
+        el.innerHTML = speedEventMarkerSvg(ev.type as "speeding" | "speeding_risky");
+      } else {
+        el.textContent = ev.icon;
+      }
       const ctx = CONTEXT_LABELS[ev.attributed_to] ?? ev.attributed_to;
       el.title = `${ev.label} — ${ctx}`;
+      const popupTitle =
+        SPEED_EVENT_TYPES.has(ev.type) ? `<strong>${ev.label}</strong>` : `<strong>${ev.icon} ${ev.label}</strong>`;
       const marker = new maplibregl.Marker({ element: el, anchor: "center" })
         .setLngLat([ev.lng, ev.lat])
         .setPopup(
           new maplibregl.Popup({ offset: 14, closeButton: false }).setHTML(
             `<div style="background:#18181b;color:#fafafa;padding:6px 10px;border-radius:6px;font-size:12px;line-height:1.5">
-              <strong>${ev.icon} ${ev.label}</strong><br/>
+              ${popupTitle}<br/>
               Context: <em>${ctx}</em><br/>
               Magnitude: ${ev.magnitude.toFixed(2)}
             </div>`

@@ -520,15 +520,15 @@ export function RideComfort() {
         ]
       : null;
 
-  const redStreamRows = useMemo(
-    () => streamRows.filter((r) => r.comfort === "red"),
+  const nonGreenStreamRows = useMemo(
+    () => streamRows.filter((r) => r.comfort !== "green"),
     [streamRows],
   );
 
   useEffect(() => {
-    if (sideTab !== "analytics" || !redStreamRows.length) return;
+    if (sideTab !== "analytics" || !nonGreenStreamRows.length) return;
     streamEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [redStreamRows.length, sideTab]);
+  }, [nonGreenStreamRows.length, sideTab]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950">
@@ -540,26 +540,24 @@ export function RideComfort() {
       />
 
       <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="absolute left-4 top-4 rounded-lg border border-zinc-200 bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-bold" style={{ color: "#00b14f" }}>Grab</span>
-              <span className="text-sm font-medium text-zinc-800">Comfort Intelligence</span>
+        <div className="pointer-events-auto absolute left-4 top-4 right-4 flex min-h-0 max-h-[min(72vh,calc(100%-2rem))] w-auto flex-col gap-3 overflow-hidden rounded-lg border border-zinc-200 bg-white/95 p-4 shadow-2xl backdrop-blur md:right-auto md:w-80 md:max-h-[calc(100%-2rem)]">
+          <div className="shrink-0 border-b border-zinc-100 pb-3">
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-sm font-bold leading-none" style={{ color: "#00b14f" }}>Grab</span>
+              <span className="text-[11px] font-medium leading-none text-zinc-700">Comfort Intelligence</span>
             </div>
-            <div className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
-              <span className={`h-1.5 w-1.5 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
+            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-zinc-500">
+              <span className={`h-1 w-1 shrink-0 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
               {phase === "running"
                 ? wsReady ? "Connected · simulating" : "Connecting..."
                 : phase === "done" ? "Trip complete" : "Ready"}
             </div>
             {routingNote && phase === "running" && (
-              <p className="mt-2 max-w-[220px] text-[11px] leading-snug text-amber-700">{routingNote}</p>
+              <p className="mt-2 max-w-[220px] text-[10px] leading-snug text-amber-700">{routingNote}</p>
             )}
           </div>
-        </div>
 
-        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex min-h-0 max-h-[72vh] flex-col gap-5 overflow-hidden rounded-lg border border-zinc-200 bg-white/95 p-5 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:top-4 md:w-80 md:max-h-none">
-          <div className="grid shrink-0 grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-sm font-medium">
+          <div className="grid shrink-0 grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-xs font-medium">
             <button
               type="button"
               onClick={() => setSideTab("monitor")}
@@ -786,41 +784,41 @@ export function RideComfort() {
           {sideTab === "analytics" && (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
               <div className="shrink-0">
-                <p className="text-sm font-medium text-zinc-800">Rough samples (red)</p>
+                <p className="text-sm font-medium text-zinc-800">Noteworthy samples</p>
                 <p className="mt-0.5 text-xs text-zinc-500">
                   {phase === "idle" &&
-                    "Only instant red-band samples are listed — same WebSocket stream as the map, filtered to rough moments."}
+                    "Yellow and red instants from the live stream — everything except normal (green), e.g. harder motion or speed-limit stress."}
                   {phase === "running" &&
-                    `${redStreamRows.length} rough · ${streamRows.length} total samples`}
+                    `${nonGreenStreamRows.length} non-green · ${streamRows.length} total samples`}
                   {phase === "done" &&
-                    `${redStreamRows.length} rough · ${streamRows.length} total samples in the last trip`}
+                    `${nonGreenStreamRows.length} non-green · ${streamRows.length} total samples in the last trip`}
                 </p>
               </div>
 
               {streamRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
                   {phase === "idle"
-                    ? "No trip yet. Book a trip on Monitor, then open this tab during the run to see rough samples only."
+                    ? "No trip yet. Book a trip on Monitor, then open this tab during the run to see non-green samples."
                     : "Waiting for the first position update…"}
                 </div>
-              ) : redStreamRows.length === 0 ? (
+              ) : nonGreenStreamRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
-                  No red-band samples in this trip yet — motion stayed in the green/yellow comfort band at every logged instant.
+                  No yellow or red samples in this trip yet — comfort stayed in the green band at every logged instant.
                 </div>
               ) : (
                 <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/30">
                   <ul className="flex flex-col gap-1.5 p-2">
-                    {redStreamRows.map((r, i) => (
+                    {nonGreenStreamRows.map((r, i) => (
                       <li
-                        key={`${r.t_ms}-red-${i}`}
-                        className={`rounded-r-md border border-zinc-200/80 py-1.5 pl-2.5 pr-2 text-left ${STREAM_TONE.red.line}`}
+                        key={`${r.t_ms}-${r.comfort}-${i}`}
+                        className={`rounded-r-md border border-zinc-200/80 py-1.5 pl-2.5 pr-2 text-left ${STREAM_TONE[r.comfort].line}`}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono text-[10px] text-zinc-500">
-                            t={r.t_ms.toFixed(0)}ms · rough #{i + 1}
+                            t={r.t_ms.toFixed(0)}ms · #{i + 1}
                           </span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${STREAM_TONE.red.chip}`}>
-                            red
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${STREAM_TONE[r.comfort].chip}`}>
+                            {r.comfort}
                           </span>
                         </div>
                         <p className="mt-0.5 font-mono text-[11px] text-zinc-800">
