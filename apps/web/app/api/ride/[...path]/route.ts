@@ -1,26 +1,18 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { Agent } from "undici";
 
 export const dynamic = "force-dynamic";
 
 const raw = (process.env.RIDE_API_UPSTREAM || process.env.BACKEND_URL || "").trim();
 const UP = raw.replace(/\/$/, "");
 
-// #region agent log
-const __dbg = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
-  void fetch("http://127.0.0.1:7880/ingest/ff5ed5c1-ec83-4529-bdaf-8afcc881e265", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f34b8e" },
-    body: JSON.stringify({
-      sessionId: "f34b8e",
-      location,
-      message,
-      data: { ...data, hypothesisId },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-};
-// #endregion
+const RIDE_API_TLS_INSECURE =
+  process.env.RIDE_API_TLS_INSECURE === "1" || process.env.RIDE_API_TLS_INSECURE === "true";
+
+const rideInsecureAgent = RIDE_API_TLS_INSECURE
+  ? new Agent({ connect: { rejectUnauthorized: false } })
+  : undefined;
 
 function resolveUpstream(): string | null {
   if (!UP) return null;
@@ -28,16 +20,22 @@ function resolveUpstream(): string | null {
   return `https://${UP}`;
 }
 
+function serializeFetchError(e: unknown): { message: string; cause?: string; code?: string } {
+  const err = e as { message?: string; cause?: unknown; code?: string };
+  return {
+    message: err?.message ?? String(e),
+    cause: err?.cause != null ? String(err.cause) : undefined,
+    code: err?.code,
+  };
+}
+
 async function handle(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const ride = resolveUpstream();
   if (!ride) {
-    // #region agent log
-    __dbg("ride/[...path]/route.ts:handle", "ride-proxy-no-upstream", { hasRaw: Boolean(raw), upLen: UP.length }, "H2");
-    // #endregion
     return NextResponse.json(
       {
         detail:
-          "RIDE_API_UPSTREAM (or BACKEND_URL) is not set. In Vercel, set it to your public FastAPI base URL, e.g. https://your-api.railway.app",
+          "RIDE_API_UPSTREAM (or BACKEND_URL) is not set. In Vercel, set it to your public FastAPI base URL, e.g. https://54-169-70-247.sslip.io",
       },
       { status: 503 },
     );
@@ -55,55 +53,38 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     const v = req.headers.get(h);
     if (v) headers.set(h, v);
   }
+  // Nginx may gzip; we do not forward content-encoding, so require uncompressed from upstream.
+  headers.set("accept-encoding", "identity");
 
   const init: RequestInit = { method, headers, redirect: "follow" };
   if (method !== "GET" && method !== "HEAD") {
     init.body = await req.arrayBuffer();
   }
 
-  // #region agent log
-  __dbg(
-    "ride/[...path]/route.ts:handle",
-    "ride-proxy-pre-fetch",
-    {
-      targetHref: target.href,
-      ride,
-      method,
-      tlsInsecureEnv: process.env.RIDE_API_TLS_INSECURE ?? "(unset)",
-    },
-    "H3",
-  );
-  // #endregion
+  const fetchInit = {
+    ...init,
+    dispatcher:
+      rideInsecureAgent && ride.startsWith("https:") ? rideInsecureAgent : undefined,
+  } as RequestInit & { dispatcher?: typeof rideInsecureAgent };
 
   let res: Response;
   try {
-    res = await fetch(target, init);
+    res = await fetch(target, fetchInit);
   } catch (e) {
-    const err = e as { message?: string; name?: string; cause?: unknown; code?: string };
-    // #region agent log
-    __dbg(
-      "ride/[...path]/route.ts:handle",
-      "ride-proxy-fetch-threw",
+    const se = serializeFetchError(e);
+    return NextResponse.json(
       {
-        errName: err?.name,
-        errMessage: err?.message,
-        errCode: err?.code,
-        cause: err?.cause != null ? String(err.cause) : undefined,
+        detail:
+          "Proxy could not reach the ride API. If the host uses a self-signed cert (e.g. nginx reset after deploy), set RIDE_API_TLS_INSECURE=1 on Vercel, or re-apply Let’s Encrypt on the server.",
+        upstream: target.href,
+        error: se.message,
+        cause: se.cause,
+        code: se.code,
       },
-      "H1",
+      { status: 502 },
     );
-    // #endregion
-    throw e;
   }
 
-  // #region agent log
-  __dbg(
-    "ride/[...path]/route.ts:handle",
-    "ride-proxy-fetch-ok",
-    { status: res.status, ok: res.ok },
-    "H5",
-  );
-  // #endregion
   const out = new NextResponse(res.body, { status: res.status });
   res.headers.forEach((value, key) => {
     if (key === "content-encoding" || key === "transfer-encoding") return;

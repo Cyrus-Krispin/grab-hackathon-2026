@@ -37,6 +37,12 @@ function isBarePublicIpInUrl(url: string): boolean {
 /** When true, HTTP clients use same-origin /api/ride (Vercel proxy) and WSS is resolved from the server. */
 export function shouldUseApiProxy(): boolean {
   if (typeof window === "undefined") return false;
+  if (
+    process.env.NEXT_PUBLIC_RIDE_VIA_BFF === "1" ||
+    process.env.NEXT_PUBLIC_RIDE_VIA_BFF === "true"
+  ) {
+    if (isLocalHostName(window.location.hostname)) return true;
+  }
   if (isLocalHostName(window.location.hostname)) return false;
   if (rawApi && !isLocalhostUrl(rawApi)) {
     if (isBarePublicIpInUrl(rawApi)) return true;

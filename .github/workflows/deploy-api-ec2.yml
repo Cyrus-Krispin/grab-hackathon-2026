@@ -60,6 +60,7 @@ jobs:
           . .venv/bin/activate
           pip install -q --upgrade pip
           pip install -q "fastapi>=0.115.0" "uvicorn[standard]>=0.32.0" "httpx>=0.27.0" "pydantic>=2.0.0" "pydantic-settings>=2.0.0"
+          # Overwrites TLS to self-signed; if you use Let’s Encrypt, re-run deploy/ec2/letsencrypt-bootstrap.sh after deploy
           sudo install -m 644 "$REPO/deploy/ec2/ride-comfort.nginx.conf" /etc/nginx/conf.d/ride-comfort.conf
           sudo install -m 644 "$REPO/deploy/ec2/ride-comfort-api.service" /etc/systemd/system/ride-comfort-api.service
           if [ -x "$REPO/deploy/ec2/trim-nginx-default.sh" ]; then
