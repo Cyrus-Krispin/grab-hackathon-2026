@@ -1,0 +1,18 @@
+[Unit]
+Description=Ride comfort FastAPI (uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/grab-hackathon-2026/apps/api
+Environment=PYTHONUNBUFFERED=1
+# Optional: set USE_DIRECTIONS_FIXTURE=1 for demo without live Grab calls
+EnvironmentFile=-/etc/ride-comfort.env
+ExecStart=/home/ec2-user/grab-hackathon-2026/apps/api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

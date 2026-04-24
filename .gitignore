@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+*.pem
 
 # Dependencies and builds
 node_modules/

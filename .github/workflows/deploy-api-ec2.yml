@@ -1,0 +1,83 @@
+# Deploy FastAPI in apps/ to Amazon EC2 (ec2-user + nginx + TLS).
+# Secrets: EC2_SSH_KEY (full private key, PEM), optional EC2_HOST (defaults to 54.169.70.247).
+# Optional: GRAB and API env in /etc/ride-comfort.env on the server (not in the repo).
+name: Deploy API to EC2
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "apps/api/**"
+      - "deploy/ec2/**"
+      - ".github/workflows/deploy-api-ec2.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-api-ec2
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rsync to EC2, install, restart
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_USER: ec2-user
+        run: |
+          set -euo pipefail
+          HOST='${{ secrets.EC2_HOST }}'
+          if [ -z "$HOST" ] || [ "$HOST" = "" ]; then
+            HOST="54.169.70.247"
+          fi
+          echo "EC2: ${EC2_USER}@${HOST}"
+          if [ -z "${EC2_SSH_KEY:-}" ]; then
+            echo "Add repository secret: EC2_SSH_KEY (contents of your .pem private key)" >&2
+            exit 1
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/ec2-deploy
+          chmod 600 ~/.ssh/ec2-deploy
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          SH="ssh -i $HOME/.ssh/ec2-deploy -o IdentitiesOnly=yes $EC2_USER@$HOST"
+          $SH "mkdir -p grab-hackathon-2026/apps/api grab-hackathon-2026/deploy/ec2"
+          RSYNC_SSH="ssh -i $HOME/.ssh/ec2-deploy -o IdentitiesOnly=yes"
+          rsync -avz -e "$RSYNC_SSH" --delete --exclude .venv --exclude __pycache__ \
+            apps/api/ "$EC2_USER@$HOST:grab-hackathon-2026/apps/api/"
+          rsync -avz -e "$RSYNC_SSH" \
+            deploy/ec2/ "$EC2_USER@$HOST:grab-hackathon-2026/deploy/ec2/"
+          $SH bash -s << 'REMOTE'
+          set -euo pipefail
+          REPO="$HOME/grab-hackathon-2026"
+          if ! command -v python3.11 &>/dev/null; then
+            sudo dnf install -y python3.11
+          fi
+          cd "$REPO/apps/api"
+          python3.11 -m venv .venv
+          . .venv/bin/activate
+          pip install -q --upgrade pip
+          pip install -q "fastapi>=0.115.0" "uvicorn[standard]>=0.32.0" "httpx>=0.27.0" "pydantic>=2.0.0" "pydantic-settings>=2.0.0"
+          sudo install -m 644 "$REPO/deploy/ec2/ride-comfort.nginx.conf" /etc/nginx/conf.d/ride-comfort.conf
+          sudo install -m 644 "$REPO/deploy/ec2/ride-comfort-api.service" /etc/systemd/system/ride-comfort-api.service
+          if [ -x "$REPO/deploy/ec2/trim-nginx-default.sh" ]; then
+            sudo bash "$REPO/deploy/ec2/trim-nginx-default.sh" || true
+          fi
+          sudo systemctl try-reload-or-restart nginx
+          sudo systemctl daemon-reload
+          sudo systemctl enable ride-comfort-api
+          sudo systemctl restart ride-comfort-api
+          systemctl is-active --quiet ride-comfort-api
+          echo "ride-comfort-api: active"
+          REMOTE
+
+      - name: Health check (HTTPS, self-signed)
+        run: |
+          HOST='${{ secrets.EC2_HOST }}'
+          if [ -z "$HOST" ] || [ "$HOST" = "" ]; then
+            HOST="54.169.70.247"
+          fi
+          curl -fsSk "https://${HOST}/health" | head -c 800
+          echo
