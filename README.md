@@ -1,4 +1,4 @@
-# RoadSense — Comfort-Aware Map Intelligence (Grab Maps API Hackathon)
+# RoadSense — Comfort-Aware Map Intelligence (GrabMaps API Hackathon 2026)
 
 **Grab knows where a ride happened. This demo shows how it could know how it felt.**
 
@@ -282,4 +282,4 @@ Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
 ---
 
-*Grab Maps API Hackathon — Grab Maps + Next.js + FastAPI — RoadSense: measurable comfort on the map.*
+*GrabMaps API Hackathon 2026 — Grab Maps + Next.js + FastAPI — RoadSense: measurable comfort on the map.*
