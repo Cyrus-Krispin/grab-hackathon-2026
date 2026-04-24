@@ -15,11 +15,33 @@ function isLocalHostName(h: string): boolean {
   return LOCAL.has(h);
 }
 
+/**
+ * Browsers (and the standard JS fetch) cannot accept self-signed https on a bare
+ * public IP. If NEXT_PUBLIC_API_URL points at an IP, we must not call it from
+ * the browser; use the same-origin BFF (e.g. /api/ride on Vercel) with
+ * RIDE_API_UPSTREAM + RIDE_API_TLS_INSECURE on the server.
+ * Same for wss:// to an IP if NEXT_PUBLIC_WS_URL is set.
+ */
+function isBarePublicIpInUrl(url: string): boolean {
+  if (!url.trim()) return false;
+  try {
+    const h = new URL(url).hostname;
+    if (h === "localhost" || h === "127.0.0.1" || h === "[::1]") return false;
+    if (h.startsWith("[")) return true;
+    return /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(h);
+  } catch {
+    return false;
+  }
+}
+
 /** When true, HTTP clients use same-origin /api/ride (Vercel proxy) and WSS is resolved from the server. */
 export function shouldUseApiProxy(): boolean {
   if (typeof window === "undefined") return false;
   if (isLocalHostName(window.location.hostname)) return false;
-  if (rawApi && !isLocalhostUrl(rawApi)) return false;
+  if (rawApi && !isLocalhostUrl(rawApi)) {
+    if (isBarePublicIpInUrl(rawApi)) return true;
+    return false;
+  }
   return true;
 }
 
@@ -79,7 +101,10 @@ export function getWsBaseSyncFromApiUrl(): string {
  * For WebSocket URL: on production with same-origin API proxy, ask the server for wss (cached).
  */
 export async function getBackendWsBase(): Promise<string> {
-  if (rawWs) return rawWs;
+  if (rawWs) {
+    const forceProxy = typeof window !== "undefined" && shouldUseApiProxy() && isBarePublicIpInUrl(rawWs);
+    if (!forceProxy) return rawWs;
+  }
   if (typeof window === "undefined") {
     return getWsBaseSyncFromApiUrl();
   }

@@ -6,6 +6,22 @@ export const dynamic = "force-dynamic";
 const raw = (process.env.RIDE_API_UPSTREAM || process.env.BACKEND_URL || "").trim();
 const UP = raw.replace(/\/$/, "");
 
+// #region agent log
+const __dbg = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
+  void fetch("http://127.0.0.1:7880/ingest/ff5ed5c1-ec83-4529-bdaf-8afcc881e265", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "f34b8e" },
+    body: JSON.stringify({
+      sessionId: "f34b8e",
+      location,
+      message,
+      data: { ...data, hypothesisId },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+};
+// #endregion
+
 function resolveUpstream(): string | null {
   if (!UP) return null;
   if (UP.includes("://")) return UP;
@@ -15,6 +31,9 @@ function resolveUpstream(): string | null {
 async function handle(req: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   const ride = resolveUpstream();
   if (!ride) {
+    // #region agent log
+    __dbg("ride/[...path]/route.ts:handle", "ride-proxy-no-upstream", { hasRaw: Boolean(raw), upLen: UP.length }, "H2");
+    // #endregion
     return NextResponse.json(
       {
         detail:
@@ -42,7 +61,49 @@ async function handle(req: NextRequest, context: { params: Promise<{ path: strin
     init.body = await req.arrayBuffer();
   }
 
-  const res = await fetch(target, init);
+  // #region agent log
+  __dbg(
+    "ride/[...path]/route.ts:handle",
+    "ride-proxy-pre-fetch",
+    {
+      targetHref: target.href,
+      ride,
+      method,
+      tlsInsecureEnv: process.env.RIDE_API_TLS_INSECURE ?? "(unset)",
+    },
+    "H3",
+  );
+  // #endregion
+
+  let res: Response;
+  try {
+    res = await fetch(target, init);
+  } catch (e) {
+    const err = e as { message?: string; name?: string; cause?: unknown; code?: string };
+    // #region agent log
+    __dbg(
+      "ride/[...path]/route.ts:handle",
+      "ride-proxy-fetch-threw",
+      {
+        errName: err?.name,
+        errMessage: err?.message,
+        errCode: err?.code,
+        cause: err?.cause != null ? String(err.cause) : undefined,
+      },
+      "H1",
+    );
+    // #endregion
+    throw e;
+  }
+
+  // #region agent log
+  __dbg(
+    "ride/[...path]/route.ts:handle",
+    "ride-proxy-fetch-ok",
+    { status: res.status, ok: res.ok },
+    "H5",
+  );
+  // #endregion
   const out = new NextResponse(res.body, { status: res.status });
   res.headers.forEach((value, key) => {
     if (key === "content-encoding" || key === "transfer-encoding") return;

@@ -1,8 +1,21 @@
 # Trusted HTTPS on EC2 (Let’s Encrypt)
 
-You cannot get a **publicly trusted** certificate for a **bare public IP** with Let’s Encrypt. You need a **hostname** (any subdomain you control) whose **DNS A record** points to the instance (e.g. `54.169.70.247`).
+You cannot get a **publicly trusted** certificate for a **bare public IP** with Let’s Encrypt. You need a **hostname** that resolves to the instance.
 
-## 1. DNS
+## Option A: sslip.io / nip.io (no registrar)
+
+Services like **[sslip.io](https://sslip.io)** and **[nip.io](https://nip.io)** map a name that **embeds your IP** to that address, so you get a hostname without creating your own DNS zone.
+
+**Example** for instance `54.169.70.247` (dots → hyphens in the left label):
+
+- Hostname: **`54-169-70-247.sslip.io`**
+- It should resolve to your IP: `dig +short 54-169-70-247.sslip.io`
+
+Use that exact name as `DOMAIN` in `letsencrypt-bootstrap.sh` and as your public API base (`https://54-169-70-247.sslip.io`, no trailing slash). Prefer **dash** form for IPv4 so the name is a single cert SAN label (works well with Certbot).
+
+**Caveats:** Some networks block “DNS rebinding” style names; if resolution fails, use a real domain (Option B). nip.io parsing rules can differ by format—when in doubt, use the dash form with sslip.io.
+
+## 1. DNS (Option B: your own domain)
 
 - Create: `A` record → e.g. `ride-api` → your EC2 public IP.
 - Wait until it resolves: `dig +short ride-api.yourdomain.com` shows that IP.
@@ -14,6 +27,9 @@ After the app has been deployed at least once (so nginx config exists):
 
 ```bash
 cd ~/grab-hackathon-2026/deploy/ec2
+# Option A (sslip):
+# sudo DOMAIN=54-169-70-247.sslip.io CERTBOT_EMAIL=you@example.com ./letsencrypt-bootstrap.sh
+# Option B (your domain):
 sudo DOMAIN=ride-api.yourdomain.com CERTBOT_EMAIL=you@example.com ./letsencrypt-bootstrap.sh
 ```
 
