@@ -552,8 +552,8 @@ export function RideComfort() {
           </div>
         </div>
 
-        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex max-h-[72vh] flex-col gap-5 overflow-y-auto rounded-lg border border-zinc-200 bg-white/95 p-5 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:top-4 md:w-80 md:max-h-none">
-          <div className="grid grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-sm font-medium">
+        <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex min-h-0 max-h-[72vh] flex-col gap-5 overflow-hidden rounded-lg border border-zinc-200 bg-white/95 p-5 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:top-4 md:w-80 md:max-h-none">
+          <div className="grid shrink-0 grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-sm font-medium">
             <button
               type="button"
               onClick={() => setSideTab("monitor")}
@@ -579,6 +579,7 @@ export function RideComfort() {
           </div>
 
           {sideTab === "monitor" && (
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             <>
           {/* ── Idle: pre-trip ────────────────────────────────────────── */}
           {phase === "idle" && (
@@ -780,11 +781,12 @@ export function RideComfort() {
           )}
 
             </>
+            </div>
           )}
 
           {sideTab === "analytics" && (
-            <div className="flex min-h-0 flex-1 flex-col gap-3">
-              <div>
+            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+              <div className="shrink-0">
                 <p className="text-sm font-medium text-zinc-800">Trip stream</p>
                 <p className="mt-0.5 text-xs text-zinc-500">
                   {phase === "idle" && "Samples appear here once a trip is running — same live WebSocket data as the map."
@@ -801,7 +803,7 @@ export function RideComfort() {
                     : "Waiting for the first position update…"}
                 </div>
               ) : (
-                <div className="max-h-[min(52vh,22rem)] overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/30">
+                <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/30">
                   <ul className="flex flex-col gap-1.5 p-2">
                     {streamRows.map((r, i) => (
                       <li
@@ -833,7 +835,7 @@ export function RideComfort() {
 
           {/* Error */}
           {err && (
-            <div className="rounded-lg border border-red-200 bg-red-50/95 p-3 text-xs text-red-700">
+            <div className="shrink-0 rounded-lg border border-red-200 bg-red-50/95 p-3 text-xs text-red-700">
               {err}
             </div>
           )}
