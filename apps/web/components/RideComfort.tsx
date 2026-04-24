@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComfortMap, type CurrentPosition, type PlanPin, type RideEvent, type SegmentGeo } from "./ComfortMap";
 import { SingaporePlaceField, type PickedPlace } from "./SingaporePlaceField";
-import { getApiUrl, tripWsUrl } from "@/lib/config";
+import { getApiUrl, getBackendWsBase, tripWsUrl } from "@/lib/config";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -297,6 +297,7 @@ export function RideComfort() {
   const [useDemoRoute, setUseDemoRoute] = useState(false);
   const [routingNote, setRoutingNote] = useState<string | null>(null);
   const [sideTab, setSideTab] = useState<"monitor" | "analytics">("monitor");
+  const [sideSheetOpen, setSideSheetOpen] = useState(false);
   const [streamRows, setStreamRows] = useState<StreamRow[]>([]);
 
   const tripIdRef = useRef<string | null>(null);
@@ -332,6 +333,7 @@ export function RideComfort() {
     setUseDemoRoute(false);
     completingRef.current = false;
     setStreamRows([]);
+    setSideSheetOpen(false);
   }, [stopTimer]);
 
   // ── Step 1: Book trip ──────────────────────────────────────────────────────
@@ -385,8 +387,9 @@ export function RideComfort() {
       idxRef.current = 0;
       t0Ref.current = performance.now();
 
+      const wsBase = await getBackendWsBase();
       // Open WebSocket
-      const ws = new WebSocket(tripWsUrl(d.trip_id));
+      const ws = new WebSocket(tripWsUrl(d.trip_id, wsBase));
       ws.onopen = () => setWsReady(true);
       ws.onclose = () => setWsReady(false);
       ws.onerror = () => setErr("WebSocket error — is the API running?");
@@ -432,6 +435,7 @@ export function RideComfort() {
         } catch { /* ignore parse errors */ }
       };
       wsRef.current = ws;
+      setSideSheetOpen(true);
       setPhase("running");
     } catch (e) {
       setErr(`Failed to start trip: ${e instanceof Error ? e.message : e}`);
@@ -540,23 +544,94 @@ export function RideComfort() {
       />
 
       <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="pointer-events-auto absolute left-4 top-4 right-4 flex min-h-0 max-h-[min(72vh,calc(100%-2rem))] w-auto flex-col gap-3 overflow-hidden rounded-lg border border-zinc-200 bg-white/95 p-4 shadow-2xl backdrop-blur md:right-auto md:w-80 md:max-h-[calc(100%-2rem)]">
+        {sideSheetOpen && (
+          <button
+            type="button"
+            className="pointer-events-auto fixed inset-0 z-30 cursor-default border-0 bg-black/40 md:hidden"
+            aria-label="Close menu"
+            onClick={() => setSideSheetOpen(false)}
+          />
+        )}
+        <div className="pointer-events-auto absolute left-0 right-0 top-0 z-40 flex max-h-[min(92dvh,calc(100%-0.5rem))] min-h-0 flex-col gap-3 overflow-hidden rounded-b-2xl border border-zinc-200 bg-white/95 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] shadow-2xl backdrop-blur md:left-4 md:right-auto md:top-4 md:max-h-[min(100dvh-2rem,calc(100%-2rem))] md:w-80 md:rounded-lg">
           <div className="shrink-0 border-b border-zinc-100 pb-3">
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-sm font-bold leading-none" style={{ color: "#00b14f" }}>Grab</span>
-              <span className="text-[11px] font-medium leading-none text-zinc-700">Comfort Intelligence</span>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-sm font-bold leading-none" style={{ color: "#00b14f" }}>Grab</span>
+                  <span className="text-[11px] font-medium leading-none text-zinc-700">Comfort Intelligence</span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-zinc-500">
+                  <span className={`h-1 w-1 shrink-0 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
+                  {phase === "running"
+                    ? wsReady ? "Connected · simulating" : "Connecting..."
+                    : phase === "done" ? "Trip complete" : "Ready"}
+                </div>
+                {routingNote && phase === "running" && (
+                  <p className="mt-2 max-w-[220px] text-[10px] leading-snug text-amber-700">{routingNote}</p>
+                )}
+              </div>
+              <button
+                type="button"
+                className="touch-manipulation rounded-md p-2.5 text-zinc-600 hover:bg-zinc-100 md:hidden"
+                aria-expanded={sideSheetOpen}
+                aria-label="Monitoring and analytics"
+                onClick={() => setSideSheetOpen((o) => !o)}
+              >
+                <span className="flex h-5 w-5 flex-col justify-center gap-1" aria-hidden>
+                  <span className="h-0.5 w-full rounded bg-zinc-700" />
+                  <span className="h-0.5 w-full rounded bg-zinc-700" />
+                  <span className="h-0.5 w-full rounded bg-zinc-700" />
+                </span>
+              </button>
             </div>
-            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-zinc-500">
-              <span className={`h-1 w-1 shrink-0 rounded-full ${wsReady ? "bg-green-500" : "bg-zinc-600"}`} />
-              {phase === "running"
-                ? wsReady ? "Connected · simulating" : "Connecting..."
-                : phase === "done" ? "Trip complete" : "Ready"}
-            </div>
-            {routingNote && phase === "running" && (
-              <p className="mt-2 max-w-[220px] text-[10px] leading-snug text-amber-700">{routingNote}</p>
-            )}
           </div>
 
+          {phase === "idle" && (
+            <div className="flex shrink-0 flex-col gap-3 border-b border-zinc-100 pb-3">
+              {!useDemoRoute && (
+                <div className="flex flex-col gap-3">
+                  <SingaporePlaceField label="From" value={startPlace} onChange={setStartPlace} />
+                  <SingaporePlaceField label="To" value={endPlace} onChange={setEndPlace} />
+                </div>
+              )}
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-700">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 rounded border-zinc-300"
+                  checked={useDemoRoute}
+                  onChange={(e) => {
+                    setUseDemoRoute(e.target.checked);
+                    if (e.target.checked) {
+                      setStartPlace(null);
+                      setEndPlace(null);
+                    }
+                  }}
+                />
+                <span>
+                  <span className="font-medium text-zinc-800">Demo route</span>
+                  <span className="block text-zinc-500">Use the built-in sample path (no place search).</span>
+                </span>
+              </label>
+              <button
+                onClick={startTrip}
+                disabled={!useDemoRoute && (!startPlace || !endPlace)}
+                className="w-full touch-manipulation rounded-lg py-3 text-sm font-semibold text-white transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                style={{ background: "#00b14f" }}
+              >
+                Book &amp; Start Trip
+              </button>
+            </div>
+          )}
+
+          {err && (
+            <div className="shrink-0 rounded-lg border border-red-200 bg-red-50/95 p-3 text-xs text-red-700">
+              {err}
+            </div>
+          )}
+
+          <div
+            className={`flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden ${!sideSheetOpen && phase === "idle" ? "max-md:hidden" : ""}`}
+          >
           <div className="grid shrink-0 grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-xs font-medium">
             <button
               type="button"
@@ -585,48 +660,11 @@ export function RideComfort() {
           {sideTab === "monitor" && (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
             <>
-          {/* ── Idle: pre-trip ────────────────────────────────────────── */}
+          {/* ── Idle: info (search + book is above) ───────────────────── */}
           {phase === "idle" && (
-            <div className="flex flex-col gap-5">
-              <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-5 text-sm leading-relaxed text-zinc-600">
-                <p className="mb-2 text-zinc-800 font-medium">How it works</p>
-                <p>Search any start and end in Singapore, then run a simulation along the driving route. We highlight <span className="text-zinc-800 font-medium">speed vs the posted limit</span>, <span className="text-zinc-800 font-medium">uneven or hard acceleration</span>, braking, lateral motion, and bumps — as motion signals on each segment, not as feedback to anyone.</p>
-              </div>
-
-              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-zinc-200 bg-white p-3 text-xs text-zinc-700">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 rounded border-zinc-300"
-                  checked={useDemoRoute}
-                  onChange={(e) => {
-                    setUseDemoRoute(e.target.checked);
-                    if (e.target.checked) {
-                      setStartPlace(null);
-                      setEndPlace(null);
-                    }
-                  }}
-                />
-                <span>
-                  <span className="font-medium text-zinc-800">Demo route</span>
-                  <span className="block text-zinc-500">Use the built-in sample path (no place search).</span>
-                </span>
-              </label>
-
-              {!useDemoRoute && (
-                <div className="flex flex-col gap-4">
-                  <SingaporePlaceField label="From" value={startPlace} onChange={setStartPlace} />
-                  <SingaporePlaceField label="To" value={endPlace} onChange={setEndPlace} />
-                </div>
-              )}
-
-              <button
-                onClick={startTrip}
-                disabled={!useDemoRoute && (!startPlace || !endPlace)}
-                className="w-full rounded-lg py-3 text-sm font-semibold text-white transition-all active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
-                style={{ background: "#00b14f" }}
-              >
-                Book &amp; Start Trip
-              </button>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50/95 p-4 text-sm leading-relaxed text-zinc-600 sm:p-5">
+              <p className="mb-2 text-zinc-800 font-medium">How it works</p>
+              <p>Search any start and end in Singapore, then run a simulation along the driving route. We highlight <span className="text-zinc-800 font-medium">speed vs the posted limit</span>, <span className="text-zinc-800 font-medium">uneven or hard acceleration</span>, braking, lateral motion, and bumps — as motion signals on each segment, not as feedback to anyone.</p>
             </div>
           )}
 
@@ -836,12 +874,7 @@ export function RideComfort() {
             </div>
           )}
 
-          {/* Error */}
-          {err && (
-            <div className="shrink-0 rounded-lg border border-red-200 bg-red-50/95 p-3 text-xs text-red-700">
-              {err}
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </div>
