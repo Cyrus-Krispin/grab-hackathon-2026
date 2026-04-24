@@ -179,6 +179,7 @@ def on_sample(
 
     return {
         "type": "state",
+        "t_ms": round(t_ms, 1),
         "current_segment": sid,
         "segment_count": len(trip.segments),
         "comfort": comfort,

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ComfortMap, type CurrentPosition, type PlanPin, type RideEvent, type SegmentGeo } from "./ComfortMap";
 import { SingaporePlaceField, type PickedPlace } from "./SingaporePlaceField";
@@ -31,6 +30,23 @@ type FinalResult = {
   coaching: string[];
   events: RideEvent[];
   stats: { total_events: number; red_segments: number; yellow_segments: number; green_segments: number };
+};
+
+type StreamRow = {
+  t_ms: number;
+  lat: number;
+  lng: number;
+  comfort: Comfort;
+  lateral_mps2: number;
+  brake_mps2: number;
+  jerk_mps3: number;
+  speed_kmh: number;
+};
+
+const STREAM_TONE: Record<Comfort, { line: string; chip: string }> = {
+  green:  { line: "border-l-4 border-l-emerald-500 bg-emerald-50/90", chip: "bg-emerald-600 text-white" },
+  yellow: { line: "border-l-4 border-l-amber-500 bg-amber-50/90", chip: "bg-amber-500 text-white" },
+  red:    { line: "border-l-4 border-l-red-500 bg-red-50/90", chip: "bg-red-600 text-white" },
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -251,8 +267,11 @@ export function RideComfort() {
   const [endPlace, setEndPlace] = useState<PickedPlace | null>(null);
   const [useDemoRoute, setUseDemoRoute] = useState(false);
   const [routingNote, setRoutingNote] = useState<string | null>(null);
+  const [sideTab, setSideTab] = useState<"monitor" | "analytics">("monitor");
+  const [streamRows, setStreamRows] = useState<StreamRow[]>([]);
 
   const tripIdRef = useRef<string | null>(null);
+  const streamEndRef = useRef<HTMLDivElement | null>(null);
   const wsRef     = useRef<WebSocket | null>(null);
   const timerRef  = useRef<ReturnType<typeof setInterval> | null>(null);
   const samplesRef = useRef<ReturnType<typeof buildSamples>>([]);
@@ -283,6 +302,7 @@ export function RideComfort() {
     setEndPlace(null);
     setUseDemoRoute(false);
     completingRef.current = false;
+    setStreamRows([]);
   }, [stopTimer]);
 
   // ── Step 1: Book trip ──────────────────────────────────────────────────────
@@ -291,6 +311,7 @@ export function RideComfort() {
     setErr(null); setResult(null); setEvents([]); setLive(null);
     setGeojson(emptyFc); setPhase("idle"); setWsReady(false);
     setRoutingNote(null);
+    setStreamRows([]);
 
     if (!useDemoRoute && (!startPlace || !endPlace)) {
       setErr("Select a start and end place in Singapore, or turn on “Demo route”.");
@@ -354,6 +375,24 @@ export function RideComfort() {
             if (msg.segment_geojson) setGeojson(msg.segment_geojson);
             if (msg.new_events?.length) {
               setEvents((prev) => [...prev, ...msg.new_events]);
+            }
+            const m = msg.metrics;
+            const p = msg.position;
+            if (m && p) {
+              setStreamRows((prev) => {
+                const row: StreamRow = {
+                  t_ms: typeof msg.t_ms === "number" ? msg.t_ms : 0,
+                  lat: p.lat,
+                  lng: p.lng,
+                  comfort: msg.comfort,
+                  lateral_mps2: m.lateral_mps2,
+                  brake_mps2: m.brake_mps2,
+                  jerk_mps3: m.jerk_mps3,
+                  speed_kmh: m.speed_kmh,
+                };
+                const next = [...prev, row];
+                return next.length > 4000 ? next.slice(-3000) : next;
+              });
             }
           }
         } catch { /* ignore parse errors */ }
@@ -446,6 +485,11 @@ export function RideComfort() {
         ]
       : null;
 
+  useEffect(() => {
+    if (sideTab !== "analytics" || !streamRows.length) return;
+    streamEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [streamRows.length, sideTab]);
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950">
       <ComfortMap
@@ -478,18 +522,30 @@ export function RideComfort() {
           <div className="grid grid-cols-2 rounded-lg border border-zinc-200 bg-zinc-100 p-1 text-sm font-medium">
             <button
               type="button"
-              className="rounded-md bg-white px-3 py-2 text-zinc-900 shadow-sm"
+              onClick={() => setSideTab("monitor")}
+              className={
+                sideTab === "monitor"
+                  ? "rounded-md bg-white px-3 py-2 text-zinc-900 shadow-sm"
+                  : "rounded-md px-3 py-2 text-zinc-600 transition-colors hover:bg-white/70 hover:text-zinc-900"
+              }
             >
               Monitor
             </button>
-            <Link
-              href="/analytics"
-              className="rounded-md px-3 py-2 text-center text-zinc-600 transition-colors hover:bg-white/70 hover:text-zinc-900"
+            <button
+              type="button"
+              onClick={() => setSideTab("analytics")}
+              className={
+                sideTab === "analytics"
+                  ? "rounded-md bg-white px-3 py-2 text-zinc-900 shadow-sm"
+                  : "rounded-md px-3 py-2 text-zinc-600 transition-colors hover:bg-white/70 hover:text-zinc-900"
+              }
             >
               Analytics
-            </Link>
+            </button>
           </div>
 
+          {sideTab === "monitor" && (
+            <>
           {/* ── Idle: pre-trip ────────────────────────────────────────── */}
           {phase === "idle" && (
             <div className="flex flex-col gap-5">
@@ -684,6 +740,58 @@ export function RideComfort() {
               >
                 New Trip
               </button>
+            </div>
+          )}
+
+            </>
+          )}
+
+          {sideTab === "analytics" && (
+            <div className="flex min-h-0 flex-1 flex-col gap-3">
+              <div>
+                <p className="text-sm font-medium text-zinc-800">Trip stream</p>
+                <p className="mt-0.5 text-xs text-zinc-500">
+                  {phase === "idle" && "Samples appear here once a trip is running — same live WebSocket data as the map."
+                  }
+                  {phase === "running" && `${streamRows.length} sample(s) · in range vs rough by instant comfort band`}
+                  {phase === "done" && `${streamRows.length} sample(s) recorded for the last trip`}
+                </p>
+              </div>
+
+              {streamRows.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
+                  {phase === "idle"
+                    ? "No trip yet. Book a trip on Monitor, then open this tab during the run to watch coordinates and metrics update."
+                    : "Waiting for the first position update…"}
+                </div>
+              ) : (
+                <div className="max-h-[min(52vh,22rem)] overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/30">
+                  <ul className="flex flex-col gap-1.5 p-2">
+                    {streamRows.map((r, i) => (
+                      <li
+                        key={`${r.t_ms}-${i}`}
+                        className={`rounded-r-md border border-zinc-200/80 py-1.5 pl-2.5 pr-2 text-left ${STREAM_TONE[r.comfort].line}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-mono text-[10px] text-zinc-500">
+                            t={r.t_ms.toFixed(0)}ms · seg sample #{i + 1}
+                          </span>
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${STREAM_TONE[r.comfort].chip}`}>
+                            {r.comfort}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 font-mono text-[11px] text-zinc-800">
+                          {r.lat.toFixed(5)}°, {r.lng.toFixed(5)}°
+                        </p>
+                        <p className="text-[10px] text-zinc-600">
+                          lateral {r.lateral_mps2.toFixed(2)} · brake {r.brake_mps2.toFixed(2)} · jerk {r.jerk_mps3.toFixed(1)} · {r.speed_kmh.toFixed(0)} km/h
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                  <div ref={streamEndRef} className="h-0 w-full shrink-0" aria-hidden />
+                </div>
+              )}
             </div>
           )}
 
