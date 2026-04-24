@@ -6,6 +6,10 @@ Today, ride quality is often reduced to a single star rating. RoadSense (this pr
 
 For the hackathon, motion is **simulated in the browser** along real or fixture polylines; the **FastAPI** backend scores samples in real time over **WebSocket** and returns an end-of-trip summary the **Next.js** app renders beside a **MapLibre** map.
 
+### Demo video
+
+**[RoadSense — walkthrough on YouTube](https://www.youtube.com/watch?v=tQkLj4Anrbk)**
+
 ### See it during navigation
 
 ![RoadSense dashboard: Grab map with comfort-colored route, event markers on the path, live metrics, and detected events](docs/roadsense-live-navigation.png)
@@ -24,6 +28,7 @@ While the trip runs, issues surface in **three places at once** so you can see *
 
 ## Table of contents
 
+- [Demo video](#demo-video)
 - [See it during navigation](#see-it-during-navigation)
 - [Product idea](#product-idea)
 - [What this repo implements](#what-this-repo-implements)
