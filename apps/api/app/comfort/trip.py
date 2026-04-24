@@ -75,6 +75,13 @@ def create_trip() -> Trip:
     )
 
 
+def _comfort_minimum_for_event(etype: str) -> Comfort:
+    """Discrete detections should affect trip score; bumps are milder on the segment band."""
+    if etype == "bump":
+        return "yellow"
+    return "red"
+
+
 def _comfort_level(b: Baseline, lateral: float, brake: float, jerk: float) -> Comfort:
     lat_r = abs(lateral) / max(b.max_lateral_mps2, 0.01)
     brk_r = max(0.0, brake) / max(b.max_longitudinal_mps2, 0.01)
@@ -155,6 +162,13 @@ def on_sample(
         trip.events.append(ev)
         new_events.append(ev)
 
+    for ev in new_events:
+        sid_ev = ev.segment_id
+        if sid_ev in trip.segment_comfort:
+            trip.segment_comfort[sid_ev] = _worst(
+                trip.segment_comfort[sid_ev], _comfort_minimum_for_event(ev.type)
+            )
+
     trip.history.append({"t_ms": t_ms, "lat": lat, "lng": lng, "ax": ax, "ay": ay, "az": az, "sid": sid})
     if sid in trip.segment_comfort:
         trip.segment_comfort[sid] = _worst(trip.segment_comfort[sid], comfort)
@@ -189,13 +203,30 @@ def segment_color_payload(trip: Trip) -> List[dict]:
     ]
 
 
+_EVENT_IMPACT: Dict[str, float] = {
+    "harsh_brake": 7.0,
+    "harsh_accel": 6.0,
+    "sharp_turn": 6.0,
+    "bump": 5.0,
+    "speeding_risky": 8.0,
+}
+
+
 def final_score(trip: Trip) -> dict:
     segs = trip.segments
     n = max(1, len(segs))
     red = sum(1 for s in segs if trip.segment_comfort.get(s.id) == "red")
     yel = sum(1 for s in segs if trip.segment_comfort.get(s.id) == "yellow")
 
-    score = 100.0 - 20.0 * (red / n) - 7.0 * (yel / n)
+    # Segment blend: how rough the route felt along distance
+    seg_score = 100.0 - 22.0 * (red / n) - 8.0 * (yel / n)
+    # Event blend: discrete incidents always cap the score (fixes all-green segments + rounding to 100)
+    ev_deduction = min(
+        55.0,
+        sum(_EVENT_IMPACT.get(e.type, 6.0) for e in trip.events),
+    )
+    ev_score = max(0.0, 100.0 - ev_deduction)
+    score = min(seg_score, ev_score)
     score = max(0.0, min(100.0, math.floor(score * 10) / 10))
 
     # Attribution breakdown

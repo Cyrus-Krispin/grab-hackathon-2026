@@ -386,7 +386,7 @@ export function RideComfort() {
                       : "#ef4444",
                   }}
                 >
-                  {result.score.toFixed(0)}
+                  {result.score.toFixed(1)}
                 </p>
                 <p className="mt-2 text-xs text-zinc-500">out of 100</p>
                 <p className="mt-4 text-sm leading-snug text-zinc-700">{result.summary}</p>
