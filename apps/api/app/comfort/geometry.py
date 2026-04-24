@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import List, Tuple
 
-from app.segmentation import Segment
+from app.comfort.segmentation import Segment
 
 
 def _ll_to_m(ref: Tuple[float, float], p: Tuple[float, float]) -> Tuple[float, float]:

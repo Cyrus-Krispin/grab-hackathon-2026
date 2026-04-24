@@ -23,5 +23,11 @@
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "optionalDependencies": {
+    "@next/swc-darwin-arm64": "^16.2.4",
+    "@tailwindcss/oxide-darwin-arm64": "^4.2.4",
+    "@unrs/resolver-binding-darwin-arm64": "^1.11.1",
+    "lightningcss-darwin-arm64": "^1.32.0"
   }
 }
