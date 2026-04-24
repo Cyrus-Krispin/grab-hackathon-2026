@@ -6,10 +6,25 @@ Today, ride quality is often reduced to a single star rating. RoadSense (this pr
 
 For the hackathon, motion is **simulated in the browser** along real or fixture polylines; the **FastAPI** backend scores samples in real time over **WebSocket** and returns an end-of-trip summary the **Next.js** app renders beside a **MapLibre** map.
 
+### See it during navigation
+
+![RoadSense dashboard: Grab map with comfort-colored route, event markers on the path, live metrics, and detected events](docs/roadsense-live-navigation.png)
+
+While the trip runs, issues surface in **three places at once** so you can see *where* and *what* without waiting for the end of the ride:
+
+| Surface | What you see |
+|--------|----------------|
+| **Map** | The path is drawn **segment by segment** in comfort colors (green → smooth, amber → mild stress, red → elevated roughness). **Markers** appear at the GPS location of each discrete event (e.g. over posted limit, bump). The vehicle position updates along the road. |
+| **Analytics** | **Lateral G**, **braking G**, **jerk**, and **speed vs segment speed limit** refresh as samples arrive—speed limits are derived from route curvature on the backend, not a separate traffic feed. |
+| **Detected events** | A scrolling list of labeled incidents (with icons) as they fire; a compact **issues** control shows the running count of notable events for the current trip. |
+
+*Note:* Continuous **comfort bands** (green/yellow/red *samples*) and discrete **events** (e.g. speeding) can differ slightly in timing: a segment can turn red from accumulated motion while the “noteworthy samples” list tracks **instant** band crossings—both views are part of the same live stream.
+
 ---
 
 ## Table of contents
 
+- [See it during navigation](#see-it-during-navigation)
 - [Product idea](#product-idea)
 - [What this repo implements](#what-this-repo-implements)
 - [Architecture](#architecture)
@@ -155,6 +170,8 @@ Trips are held **in memory** on the API process (`TRIPS` dict)—suitable for de
 ---
 
 ## Frontend (map & UI)
+
+Screenshot and explanation of how **errors and events** show up on the map and in the side panel during a trip: [See it during navigation](#see-it-during-navigation).
 
 - **[`apps/web/components/RideComfort.tsx`](apps/web/components/RideComfort.tsx)** — Trip phases (`idle` → `running` → `done`), place search (`SingaporePlaceField`), start trip, WebSocket client, **motion simulator** along returned path, live metrics, **“Noteworthy samples”** stream, completion UI (score, segment bar, event breakdown, attributed event lists).
 - **[`apps/web/components/ComfortMap.tsx`](apps/web/components/ComfortMap.tsx)** — MapLibre map, `route-comfort` GeoJSON line layer, event markers, optional plan/route pins, `transformRequest` Bearer for Grab tiles when using Grab style.
