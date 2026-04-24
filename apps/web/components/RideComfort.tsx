@@ -37,18 +37,6 @@ type FinalResult = {
 
 const emptyFc: SegmentGeo = { type: "FeatureCollection", features: [] };
 
-const COMFORT_COLORS: Record<Comfort, string> = {
-  green:  "#00b14f",
-  yellow: "#f59e0b",
-  red:    "#ef4444",
-};
-
-const COMFORT_LABELS: Record<Comfort, string> = {
-  green:  "Smooth",
-  yellow: "Bumpy",
-  red:    "Rough",
-};
-
 const ATTR_COLORS: Record<string, string> = {
   driver:  "#60a5fa",
   road:    "#f97316",
@@ -240,13 +228,36 @@ export function RideComfort() {
   const samplesRef = useRef<ReturnType<typeof buildSamples>>([]);
   const idxRef    = useRef(0);
   const t0Ref     = useRef(0);
+  const completingRef = useRef(false);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   }, []);
 
+  const resetToIdle = useCallback(() => {
+    stopTimer();
+    wsRef.current?.close();
+    wsRef.current = null;
+    tripIdRef.current = null;
+    samplesRef.current = [];
+    idxRef.current = 0;
+    setPhase("idle");
+    setGeojson(emptyFc);
+    setEvents([]);
+    setLive(null);
+    setResult(null);
+    setErr(null);
+    setWsReady(false);
+    setRoutingNote(null);
+    setStartPlace(null);
+    setEndPlace(null);
+    setUseDemoRoute(false);
+    completingRef.current = false;
+  }, [stopTimer]);
+
   // ── Step 1: Book trip ──────────────────────────────────────────────────────
   const startTrip = useCallback(async () => {
+    completingRef.current = false;
     setErr(null); setResult(null); setEvents([]); setLive(null);
     setGeojson(emptyFc); setPhase("idle"); setWsReady(false);
     setRoutingNote(null);
@@ -324,6 +335,30 @@ export function RideComfort() {
     }
   }, [useDemoRoute, startPlace, endPlace]);
 
+  // ── Step 3: Complete trip ──────────────────────────────────────────────────
+  const endTrip = useCallback(async () => {
+    if (completingRef.current) return;
+    completingRef.current = true;
+    stopTimer();
+    wsRef.current?.close();
+    const id = tripIdRef.current;
+    if (!id) {
+      completingRef.current = false;
+      return;
+    }
+    try {
+      const res = await fetch(`${getApiUrl()}/trips/${id}/complete`, { method: "POST" });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const r = await res.json() as FinalResult;
+      setResult(r);
+      if (r.events?.length) setEvents(r.events);
+      setPhase("done");
+    } catch (e) {
+      completingRef.current = false;
+      setErr(`Complete failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }, [stopTimer]);
+
   // ── Step 2: Run simulator ──────────────────────────────────────────────────
   const runSimulator = useCallback(() => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -357,8 +392,14 @@ export function RideComfort() {
           speed_kmh: s.speed_kmh,
         }));
       }
+      if (idxRef.current >= samples.length) {
+        stopTimer();
+        window.setTimeout(() => {
+          void endTrip();
+        }, 500);
+      }
     }, 120);
-  }, [stopTimer]);
+  }, [stopTimer, endTrip]);
 
   // Auto-run simulator once WS is open
   useEffect(() => {
@@ -366,35 +407,6 @@ export function RideComfort() {
       runSimulator();
     }
   }, [wsReady, phase, runSimulator]);
-
-  // ── Step 3: Complete trip ──────────────────────────────────────────────────
-  const endTrip = useCallback(async () => {
-    stopTimer();
-    wsRef.current?.close();
-    const id = tripIdRef.current;
-    if (!id) return;
-    try {
-      const res = await fetch(`${getApiUrl()}/trips/${id}/complete`, { method: "POST" });
-      if (!res.ok) throw new Error(`${res.status}`);
-      const r = await res.json() as FinalResult;
-      setResult(r);
-      if (r.events?.length) setEvents(r.events);
-      setPhase("done");
-    } catch (e) {
-      setErr(`Complete failed: ${e instanceof Error ? e.message : e}`);
-    }
-  }, [stopTimer]);
-
-  // Auto-complete when simulator finishes all samples
-  useEffect(() => {
-    if (phase !== "running" || timerRef.current) return;
-    if (!samplesRef.current.length) return;
-    if (idxRef.current >= samplesRef.current.length && idxRef.current > 0) {
-      setTimeout(endTrip, 600);
-    }
-  });
-
-  const comfort = live?.comfort ?? "green";
 
   const pickPins: PlanPin[] | null =
     phase === "idle" && startPlace && endPlace && !useDemoRoute
@@ -438,30 +450,6 @@ export function RideComfort() {
               Ops
             </Link>
           </div>
-        </div>
-
-        {phase === "running" && live && (
-          <div className="absolute left-4 top-24 flex items-center gap-2 rounded-full border border-zinc-200 bg-white/95 px-4 py-2 shadow-xl backdrop-blur">
-            <span
-              className={`h-3 w-3 rounded-full pulse-${comfort}`}
-              style={{ background: COMFORT_COLORS[comfort] }}
-            />
-            <span className="text-sm font-semibold" style={{ color: COMFORT_COLORS[comfort] }}>
-              {COMFORT_LABELS[comfort]}
-            </span>
-            <span className="ml-1 text-xs text-zinc-500">
-              seg {(live.current_segment ?? 0) + 1}/{live.segment_count ?? "-"}
-            </span>
-          </div>
-        )}
-
-        <div className="absolute bottom-6 left-4 flex gap-3 rounded-lg border border-zinc-200 bg-white/90 px-3 py-2 text-xs text-zinc-600 shadow-xl backdrop-blur">
-          {(["green","yellow","red"] as Comfort[]).map((c) => (
-            <span key={c} className="flex items-center gap-1">
-              <span className="inline-block h-1.5 w-3 rounded-full" style={{ background: COMFORT_COLORS[c] }} />
-              {COMFORT_LABELS[c]}
-            </span>
-          ))}
         </div>
 
         <div className="pointer-events-auto absolute bottom-4 left-4 right-4 flex max-h-[72vh] flex-col overflow-y-auto rounded-lg border border-zinc-200 bg-white/95 p-4 shadow-2xl backdrop-blur md:bottom-4 md:left-auto md:top-4 md:w-80 md:max-h-none">
@@ -653,7 +641,8 @@ export function RideComfort() {
               )}
 
               <button
-                onClick={startTrip}
+                type="button"
+                onClick={resetToIdle}
                 className="mt-1 w-full rounded-lg border border-zinc-300 bg-white py-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
               >
                 New Trip
