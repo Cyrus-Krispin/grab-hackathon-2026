@@ -4,17 +4,17 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict
 
-# Thresholds (m/s²)
-HARSH_BRAKE_THRESH = 3.5    # |ax| when decelerating
-HARSH_ACCEL_THRESH = 3.5    # ax when accelerating
-SHARP_TURN_THRESH = 3.0     # |ay|
-BUMP_THRESH = 2.8           # |az - 9.81|
-SPEEDING_MARGIN_KMH = 15.0  # over limit before flagging with lateral
-SPEED_OVER_LIMIT_KMH = 5.0  # plain speeding vs segment limit
-JERK_ROUGH_THRESH = 22.0  # m/s³ — uneven / snappy longitudinal changes
+# Thresholds (m/s²) — tuned so typical simulated trips aren’t flooded with incidents
+HARSH_BRAKE_THRESH = 4.2    # |ax| when decelerating
+HARSH_ACCEL_THRESH = 4.2    # ax when accelerating
+SHARP_TURN_THRESH = 3.6     # |ay|
+BUMP_THRESH = 3.4           # |az - 9.81|
+SPEEDING_MARGIN_KMH = 18.0  # over limit before flagging with lateral
+SPEED_OVER_LIMIT_KMH = 10.0  # plain speeding vs segment limit
+JERK_ROUGH_THRESH = 30.0  # m/s³ — uneven / snappy longitudinal changes
 
 # Min ms between same event type on same segment
-COOLDOWN_MS = 2500.0
+COOLDOWN_MS = 4500.0
 
 _LABELS: Dict[str, str] = {
     "harsh_brake": "Sudden braking",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ComfortMap, type CurrentPosition, type PlanPin, type RideEvent, type SegmentGeo } from "./ComfortMap";
 import { SingaporePlaceField, type PickedPlace } from "./SingaporePlaceField";
 import { getApiUrl, tripWsUrl } from "@/lib/config";
@@ -201,7 +201,7 @@ function pickIncidentIndices(n: number, count: number, rng: () => number): numbe
 function buildIncidentPlan(n: number, tripId: string): Map<number, IncidentApply> {
   const rng = mulberry32(hashTripSeed(tripId) ^ runtimeNonce32());
 
-  const count = Math.min(INCIDENT_LIBRARY.length + 1, Math.max(3, Math.floor(n / 28)));
+  const count = Math.max(1, Math.min(4, Math.floor(n / 52)));
   const indices = pickIncidentIndices(n, count, rng);
   const recipes = [...INCIDENT_LIBRARY];
   shuffleInPlace(recipes, rng);
@@ -271,7 +271,7 @@ function buildSamples(path: [number, number][], tripId: string): Sample[] {
     }
 
     const ax = 0.25 + (rng() - 0.5) * 0.15;
-    const ay = naturalLateral + (rng() - 0.5) * 0.18;
+    const ay = naturalLateral + (rng() - 0.5) * 0.12;
     const az = 9.81 + (rng() - 0.5) * 0.12;
 
     const sample: Sample = { lat, lng, ax, ay, az, speed_kmh: spd };
@@ -456,6 +456,7 @@ export function RideComfort() {
       setResult(r);
       if (r.events?.length) setEvents(r.events);
       setPhase("done");
+      completingRef.current = false;
     } catch (e) {
       completingRef.current = false;
       setErr(`Complete failed: ${e instanceof Error ? e.message : e}`);
@@ -519,10 +520,15 @@ export function RideComfort() {
         ]
       : null;
 
+  const redStreamRows = useMemo(
+    () => streamRows.filter((r) => r.comfort === "red"),
+    [streamRows],
+  );
+
   useEffect(() => {
-    if (sideTab !== "analytics" || !streamRows.length) return;
+    if (sideTab !== "analytics" || !redStreamRows.length) return;
     streamEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [streamRows.length, sideTab]);
+  }, [redStreamRows.length, sideTab]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950">
@@ -666,13 +672,6 @@ export function RideComfort() {
                   </ul>
                 </div>
               )}
-
-              <button
-                onClick={endTrip}
-                className="w-full rounded-lg border border-zinc-300 bg-white py-3 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100"
-              >
-                End Trip &amp; Score
-              </button>
             </>
           )}
 
@@ -787,35 +786,41 @@ export function RideComfort() {
           {sideTab === "analytics" && (
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
               <div className="shrink-0">
-                <p className="text-sm font-medium text-zinc-800">Trip stream</p>
+                <p className="text-sm font-medium text-zinc-800">Rough samples (red)</p>
                 <p className="mt-0.5 text-xs text-zinc-500">
-                  {phase === "idle" && "Samples appear here once a trip is running — same live WebSocket data as the map."
-                  }
-                  {phase === "running" && `${streamRows.length} sample(s) · in range vs rough by instant comfort band`}
-                  {phase === "done" && `${streamRows.length} sample(s) recorded for the last trip`}
+                  {phase === "idle" &&
+                    "Only instant red-band samples are listed — same WebSocket stream as the map, filtered to rough moments."}
+                  {phase === "running" &&
+                    `${redStreamRows.length} rough · ${streamRows.length} total samples`}
+                  {phase === "done" &&
+                    `${redStreamRows.length} rough · ${streamRows.length} total samples in the last trip`}
                 </p>
               </div>
 
               {streamRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
                   {phase === "idle"
-                    ? "No trip yet. Book a trip on Monitor, then open this tab during the run to watch coordinates and metrics update."
+                    ? "No trip yet. Book a trip on Monitor, then open this tab during the run to see rough samples only."
                     : "Waiting for the first position update…"}
+                </div>
+              ) : redStreamRows.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/95 p-4 text-xs text-zinc-600">
+                  No red-band samples in this trip yet — motion stayed in the green/yellow comfort band at every logged instant.
                 </div>
               ) : (
                 <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-zinc-200 bg-zinc-50/30">
                   <ul className="flex flex-col gap-1.5 p-2">
-                    {streamRows.map((r, i) => (
+                    {redStreamRows.map((r, i) => (
                       <li
-                        key={`${r.t_ms}-${i}`}
-                        className={`rounded-r-md border border-zinc-200/80 py-1.5 pl-2.5 pr-2 text-left ${STREAM_TONE[r.comfort].line}`}
+                        key={`${r.t_ms}-red-${i}`}
+                        className={`rounded-r-md border border-zinc-200/80 py-1.5 pl-2.5 pr-2 text-left ${STREAM_TONE.red.line}`}
                       >
                         <div className="flex items-center justify-between gap-2">
                           <span className="font-mono text-[10px] text-zinc-500">
-                            t={r.t_ms.toFixed(0)}ms · seg sample #{i + 1}
+                            t={r.t_ms.toFixed(0)}ms · rough #{i + 1}
                           </span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${STREAM_TONE[r.comfort].chip}`}>
-                            {r.comfort}
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium capitalize ${STREAM_TONE.red.chip}`}>
+                            red
                           </span>
                         </div>
                         <p className="mt-0.5 font-mono text-[11px] text-zinc-800">

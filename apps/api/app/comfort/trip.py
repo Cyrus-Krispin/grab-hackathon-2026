@@ -225,13 +225,13 @@ def segment_color_payload(trip: Trip) -> List[dict]:
 
 
 _EVENT_IMPACT: Dict[str, float] = {
-    "harsh_brake": 7.0,
-    "harsh_accel": 6.0,
-    "uneven_accel": 4.5,
-    "sharp_turn": 6.0,
-    "bump": 5.0,
-    "speeding_risky": 8.0,
-    "speeding": 5.5,
+    "harsh_brake": 5.5,
+    "harsh_accel": 4.8,
+    "uneven_accel": 3.5,
+    "sharp_turn": 4.8,
+    "bump": 3.8,
+    "speeding_risky": 6.5,
+    "speeding": 4.5,
 }
 
 
@@ -245,8 +245,8 @@ def final_score(trip: Trip) -> dict:
     seg_score = 100.0 - 22.0 * (red / n) - 8.0 * (yel / n)
     # Event blend: discrete incidents always cap the score (fixes all-green segments + rounding to 100)
     ev_deduction = min(
-        55.0,
-        sum(_EVENT_IMPACT.get(e.type, 6.0) for e in trip.events),
+        42.0,
+        sum(_EVENT_IMPACT.get(e.type, 5.0) for e in trip.events),
     )
     ev_score = max(0.0, 100.0 - ev_deduction)
     score = min(seg_score, ev_score)
